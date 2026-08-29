@@ -1,0 +1,7 @@
+.DS_Store
+.claude/settings.local.json
+
+# Personal Claude.ai conversation export — large, likely contains unrelated
+# personal content beyond this project. Excluded by default; add explicitly
+# with `git add -f conversations.json` if you want it version-controlled.
+conversations.json
