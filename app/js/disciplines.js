@@ -10,6 +10,7 @@
 
 const DISCIPLINES = [
   { code: 'team_roping', label: 'Team Roping', team: true },
+  { code: 'goat_roping', label: 'Goat Roping', team: true },
   { code: 'breakaway', label: 'Breakaway' },
   { code: 'tiedown', label: 'Tie-Down' },
   { code: 'barrels', label: 'Barrel Racing' },
@@ -45,6 +46,7 @@ function stepFor(code) {
 // apps see the same options.
 const NO_TIME_REASONS = {
   team_roping: ['Header missed', 'Heeler missed', 'Time limit', 'Scratch'],
+  goat_roping: ['Header missed', 'Heeler missed', 'Time limit', 'Scratch'],
   breakaway: ['Missed', 'Top knot', 'Illegal catch', 'Time limit', 'Scratch'],
   tiedown: ['Missed', 'Calf got up', 'Time limit', 'Scratch'],
   barrels: ['Knocked barrel', 'Broken pattern', 'Time limit', 'Scratch'],
@@ -95,6 +97,7 @@ function formatDescription(code) {
 // their seconds sum and their letters concatenate in the order applied.
 const PENALTIES = {
   team_roping: [{ label: '+10 barrier', seconds: 10, letter: 'b' }, { label: '+5 one leg', seconds: 5, letter: 'l' }],
+  goat_roping: [{ label: '+10 barrier', seconds: 10, letter: 'b' }, { label: '+5 one leg', seconds: 5, letter: 'l' }],
   breakaway: [{ label: '+10 barrier', seconds: 10, letter: 'b' }],
   tiedown: [{ label: '+10 barrier', seconds: 10, letter: 'b' }],
   barrels: [{ label: '+5 barrel', seconds: 5, letter: 'b' }],
