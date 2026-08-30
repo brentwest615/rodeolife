@@ -74,3 +74,38 @@ const FORMAT_LABELS = {
 function formatLabel(code) {
   return FORMAT_LABELS[code] || code;
 }
+
+// Stackable time penalties per discipline — exact port of the mobile app's
+// PENALTIES. `letter` is a single-character suffix (matches the mobile
+// app's compact "17.20b" display convention) rather than the full label,
+// since penalties are shown appended to the time itself, not spelled out.
+// Multiple penalties can apply to the same run (barrier + one-leg, etc.) —
+// their seconds sum and their letters concatenate in the order applied.
+const PENALTIES = {
+  team_roping: [{ label: '+10 barrier', seconds: 10, letter: 'b' }, { label: '+5 one leg', seconds: 5, letter: 'l' }],
+  breakaway: [{ label: '+10 barrier', seconds: 10, letter: 'b' }],
+  tiedown: [{ label: '+10 barrier', seconds: 10, letter: 'b' }],
+  barrels: [{ label: '+5 barrel', seconds: 5, letter: 'b' }],
+  poles: [{ label: '+5 pole', seconds: 5, letter: 'p' }],
+  trail: [],
+  goat_tying: [{ label: '+5 horse stepped on rope', seconds: 5, letter: 'r' }],
+  flag_racing: [],
+  ribbon_roping: [{ label: '+10 barrier', seconds: 10, letter: 'b' }]
+};
+
+function penaltiesFor(code) {
+  return PENALTIES[code] || [];
+}
+
+const ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'Short Go' };
+const SHORT_ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'SG' };
+
+// Which rounds a Class's format actually uses — drives round chips in the
+// wizard, which time columns appear in the spreadsheet, and CSV export
+// column headers. The short-go round only exists once a cutoff is
+// configured (see openEditClassModal in app.js).
+function roundsForClass(cls) {
+  if (cls.format === 'one_round') return ['r1'];
+  if (cls.format === 'two_round') return ['r1', 'r2'];
+  return cls.shortGoSize ? ['r1', 'r2', 'shortGo'] : ['r1', 'r2'];
+}

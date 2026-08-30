@@ -682,6 +682,48 @@ select.input { cursor: pointer; }
   white-space: nowrap;
 }
 
+/* Compact single-letter penalty toggles under a spreadsheet time cell. */
+.penalty-toggle-row {
+  display: flex;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.penalty-letter {
+  flex: 1;
+  padding: 3px 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.penalty-letter.active { background: var(--warning-soft); color: var(--warning); border-color: transparent; }
+
+/* Full penalty chips in the wizard card — same visual language as the
+   no-time reason chips, stackable/multi-select. */
+.penalty-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin: -6px 0 16px;
+}
+
+.penalty-chip {
+  padding: 7px 13px;
+  border-radius: 20px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+  background: #fff;
+  cursor: pointer;
+}
+.penalty-chip.selected { background: var(--warning); color: #fff; border-color: var(--warning); }
+
 /* ─── Times: view toggle + wizard ────────────────────────────────────── */
 
 .view-toggle {

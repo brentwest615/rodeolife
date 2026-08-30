@@ -36,6 +36,7 @@ function icon(name) {
     pin: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
     play: '<polygon points="5 3 19 12 5 21 5 3"/>',
     archive: '<path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
     camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'
   };
   const svg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ''}</svg>`;
@@ -371,6 +372,14 @@ function view_class(rodeoId, classId, tab) {
         class: 'btn btn-ghost',
         onclick: () => copyStandingsLink(rodeoId, classId)
       }, [icon('copy'), 'Share standings']),
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => downloadCsv(`${rodeo.name}-${cls.name}-${rodeo.date}.csv`, classResultsCsv(rodeo, cls))
+      }, [icon('download'), 'Export CSV']),
+      team ? el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => downloadCsv(`${rodeo.name}-${cls.name}-by-rider-${rodeo.date}.csv`, riderResultsCsv(rodeo, cls))
+      }, [icon('download'), 'Export by rider']) : null,
       el('button', { class: 'btn btn-ghost', onclick: () => openEditClassModal(rodeo, cls) }, [icon('edit'), 'Edit'])
     ])
   ]);
@@ -530,7 +539,14 @@ function standingsRowReadOnly(row, team, decimals, rounds) {
         el('span', { class: 'rider header-name' }, entry.name),
         entry.back ? el('span', { class: 'pair-sep muted' }, '#' + entry.back) : null
       ]);
-  const roundText = (key) => entry[key + 'NoTime'] ? 'NT' : (entry[key] != null ? entry[key].toFixed(decimals) : '—');
+  // Mobile app convention: a penalized time displays as "17.200b" — the raw
+  // time plus its penalty letters appended, so the penalty is visible right
+  // on the round it happened without needing a separate column.
+  const roundText = (key) => entry[key + 'NoTime']
+    ? 'NT'
+    : entry[key] != null
+      ? entry[key].toFixed(decimals) + (entry[key + 'PenaltyLabel'] || '')
+      : '—';
   const isNoTimeBadge = badge === 'NT' || badge === 'NT round 1';
   return el('div', { class: 'times-row times-row-readonly' }, [
     el('span', { class: 'draw-num' }, rank != null ? String(rank) : '—'),
@@ -1194,18 +1210,6 @@ let timesSort = 'draw';
 let timesView = 'wizard';
 let wizardRound = 'r1';
 
-const ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'Short Go' };
-const SHORT_ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'SG' };
-
-// Which rounds a Class's format actually uses — drives round chips in the
-// wizard and which time columns appear in the spreadsheet. The short-go
-// round only exists once a cutoff is configured (see openEditClassModal).
-function roundsForClass(cls) {
-  if (cls.format === 'one_round') return ['r1'];
-  if (cls.format === 'two_round') return ['r1', 'r2'];
-  return cls.shortGoSize ? ['r1', 'r2', 'shortGo'] : ['r1', 'r2'];
-}
-
 // Whether a given entry may have a time entered for `round` at all, per the
 // class's format. one_round/two_round never gate — every entry can run
 // every round in `roundsForClass`. two_round_progressive gates r2 on a clean
@@ -1449,10 +1453,34 @@ function panel_times_wizard(rodeo, cls, team, entries, decimals) {
     placeholder: (0).toFixed(decimals)
   });
 
+  // Penalty chips, mirroring the mobile app's live-scoring buttons: tap to
+  // toggle, stackable (barrier + one-leg can both apply), applied on Save.
+  const penalties = penaltiesFor(cls.discipline);
+  const selectedPenalties = new Set();
+  const penaltyChipsWrap = el('div', { class: 'penalty-chips' });
+  function renderPenaltyChips() {
+    penaltyChipsWrap.innerHTML = '';
+    penalties.forEach(p => {
+      penaltyChipsWrap.appendChild(el('button', {
+        type: 'button',
+        class: 'penalty-chip' + (selectedPenalties.has(p.letter) ? ' selected' : ''),
+        onclick: () => {
+          if (selectedPenalties.has(p.letter)) selectedPenalties.delete(p.letter);
+          else selectedPenalties.add(p.letter);
+          renderPenaltyChips();
+        }
+      }, p.label));
+    });
+  }
+  if (penalties.length) renderPenaltyChips();
+
   function save() {
     const v = parseFloat(timeInput.value);
     if (isNaN(v) || v <= 0) { timeInput.focus(); return; }
-    Store.setEntryTime(rodeo.id, cls.id, current.id, round, { seconds: v, noTime: false });
+    const chosen = penalties.filter(p => selectedPenalties.has(p.letter));
+    const penaltySeconds = chosen.reduce((s, p) => s + p.seconds, 0);
+    const penaltyLabel = chosen.map(p => p.letter).join('') || null;
+    Store.setEntryTime(rodeo.id, cls.id, current.id, round, { seconds: v, noTime: false, penaltySeconds, penaltyLabel });
   }
 
   const form = el('form', { onsubmit: e => { e.preventDefault(); save(); } }, [
@@ -1460,6 +1488,7 @@ function panel_times_wizard(rodeo, cls, team, entries, decimals) {
     el('div', { class: 'wizard-name' }, entryDisplayName(cls, current)),
     !team && current.back ? el('div', { class: 'wizard-back' }, '#' + current.back) : null,
     timeInput,
+    penalties.length ? penaltyChipsWrap : null,
     el('div', { class: 'wizard-actions' }, [
       el('button', {
         type: 'button',
@@ -1524,9 +1553,36 @@ function timeField(rodeo, cls, entry, round, label, decimals, gateReason) {
     onclick: () => openNoTimeModal(rodeo, cls, entry, round, ROUND_LABELS[round])
   }, 'NT');
   const reason = entry[round + 'NoTimeReason'];
+
+  // Compact single-letter penalty toggles — only once a real time exists to
+  // penalize (matches the usual workflow: time it, then a judge calls a
+  // barrier/leg penalty a moment later). Stackable, same as the wizard.
+  const penalties = penaltiesFor(cls.discipline);
+  const penaltyRow = penalties.length && !isNoTime && entry[round] != null
+    ? el('div', { class: 'penalty-toggle-row' }, penalties.map(p => {
+        const active = new Set((entry[round + 'PenaltyLabel'] || '').split('')).has(p.letter);
+        return el('button', {
+          type: 'button',
+          class: 'penalty-letter' + (active ? ' active' : ''),
+          title: p.label,
+          onclick: () => {
+            const current = new Set((entry[round + 'PenaltyLabel'] || '').split('').filter(Boolean));
+            if (current.has(p.letter)) current.delete(p.letter); else current.add(p.letter);
+            const chosen = penalties.filter(pp => current.has(pp.letter));
+            Store.setEntryTime(rodeo.id, cls.id, entry.id, round, {
+              seconds: entry[round], noTime: false,
+              penaltySeconds: chosen.reduce((s, pp) => s + pp.seconds, 0),
+              penaltyLabel: chosen.map(pp => pp.letter).join('') || null
+            });
+          }
+        }, p.letter.toUpperCase());
+      }))
+    : null;
+
   return el('div', { class: 'time-field' }, [
     el('label', { class: 'time-field-label' }, label),
     el('div', { class: 'time-field-row' }, [input, ntBtn]),
+    penaltyRow,
     isNoTime && reason ? el('div', { class: 'time-field-reason', title: reason }, reason) : null
   ]);
 }

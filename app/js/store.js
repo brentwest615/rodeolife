@@ -33,17 +33,20 @@
  *     // team_roping ONLY:
  *     riders: { id, name, isHeader, isHeeler }[],
  *     teams: { id, header, heeler, conflict,
- *              r1, r1NoTime, r1NoTimeReason, r2, r2NoTime, r2NoTimeReason,
- *              shortGo, shortGoNoTime, shortGoNoTimeReason }[],
+ *              r1, r1NoTime, r1NoTimeReason, r1PenaltySeconds, r1PenaltyLabel,
+ *              r2, r2NoTime, r2NoTimeReason, r2PenaltySeconds, r2PenaltyLabel,
+ *              shortGo, shortGoNoTime, shortGoNoTimeReason,
+ *              shortGoPenaltySeconds, shortGoPenaltyLabel }[],
  *     // every OTHER discipline: a flat contestant list, each carrying its own
  *     // times directly (same round fields as a team — no separate runs table,
  *     // so there's nothing to orphan if a contestant is removed):
- *     contestants: { id, name, back,
- *                    r1, r1NoTime, r1NoTimeReason, r2, r2NoTime, r2NoTimeReason,
- *                    shortGo, shortGoNoTime, shortGoNoTimeReason }[]
+ *     contestants: { id, name, back, <same round fields as teams, above> }[]
  *     // *NoTimeReason is a preset (from disciplines.js reasonsFor) and/or a
  *     // free-text note, joined with " · " when both are given — null when
  *     // no reason was recorded (a plain NT is still valid on its own).
+ *     // *PenaltySeconds (default 0) / *PenaltyLabel (default null) — stackable
+ *     // time penalties (disciplines.js PENALTIES): seconds sum, single-char
+ *     // letters concatenate, added on top of the raw time in every total.
  *   }
  *
  * Legacy local shapes, migrated ONCE (only if Supabase has zero rows — i.e.
@@ -69,9 +72,9 @@ const Store = (() => {
 
   function emptyTimeFields() {
     return {
-      r1: null, r1NoTime: false, r1NoTimeReason: null,
-      r2: null, r2NoTime: false, r2NoTimeReason: null,
-      shortGo: null, shortGoNoTime: false, shortGoNoTimeReason: null
+      r1: null, r1NoTime: false, r1NoTimeReason: null, r1PenaltySeconds: 0, r1PenaltyLabel: null,
+      r2: null, r2NoTime: false, r2NoTimeReason: null, r2PenaltySeconds: 0, r2PenaltyLabel: null,
+      shortGo: null, shortGoNoTime: false, shortGoNoTimeReason: null, shortGoPenaltySeconds: 0, shortGoPenaltyLabel: null
     };
   }
 
@@ -143,6 +146,8 @@ const Store = (() => {
           if (t[key] === undefined) t[key] = null;
           if (t[key + 'NoTime'] === undefined) t[key + 'NoTime'] = false;
           if (t[key + 'NoTimeReason'] === undefined) t[key + 'NoTimeReason'] = null;
+          if (t[key + 'PenaltySeconds'] === undefined) t[key + 'PenaltySeconds'] = 0;
+          if (t[key + 'PenaltyLabel'] === undefined) t[key + 'PenaltyLabel'] = null;
         }
       }
     }
@@ -479,7 +484,12 @@ const Store = (() => {
   //     setter works for both — the entry id is a UUID, effectively unique
   //     across the two lists) ────────────────────────────────────────────
 
-  function setEntryTime(rodeoId, classId, entryId, round, { seconds, noTime, reason }) {
+  // penaltySeconds/penaltyLabel are optional: pass them to set/replace a
+  // run's penalty (e.g. from the penalty chips), omit them to leave an
+  // existing penalty untouched (e.g. the spreadsheet's plain time input,
+  // which shouldn't wipe out a penalty someone already applied). A no-time
+  // always clears any penalty — there's no run left to penalize.
+  function setEntryTime(rodeoId, classId, entryId, round, { seconds, noTime, reason, penaltySeconds, penaltyLabel }) {
     const cls = getClass(rodeoId, classId);
     if (!cls) return;
     const entry = (cls.teams || []).find(e => e.id === entryId) ||
@@ -488,10 +498,19 @@ const Store = (() => {
     const timeKey = round; // 'r1' | 'r2' | 'shortGo'
     const noTimeKey = round + 'NoTime';
     const reasonKey = round + 'NoTimeReason';
+    const penSecKey = round + 'PenaltySeconds';
+    const penLabelKey = round + 'PenaltyLabel';
     if (!(timeKey in entry) || !(noTimeKey in entry)) return;
     entry[noTimeKey] = !!noTime;
     entry[timeKey] = noTime ? null : (seconds != null && seconds > 0 ? seconds : null);
     entry[reasonKey] = noTime ? (reason || null) : null;
+    if (noTime) {
+      entry[penSecKey] = 0;
+      entry[penLabelKey] = null;
+    } else {
+      if (penaltySeconds !== undefined) entry[penSecKey] = penaltySeconds || 0;
+      if (penaltyLabel !== undefined) entry[penLabelKey] = penaltyLabel || null;
+    }
     touch(rodeoId);
   }
 
@@ -504,7 +523,15 @@ const Store = (() => {
   // app's own rule already treats a pending R2 as 999.99 — see below).
   function roundContribution(entry, round) {
     if (entry[round + 'NoTime']) return 999.99;
-    return entry[round] != null ? entry[round] : null;
+    return entry[round] != null ? entry[round] + (entry[round + 'PenaltySeconds'] || 0) : null;
+  }
+
+  // A round's real time, with any penalty already folded in — for the
+  // branches below that need the raw clean-round value rather than the
+  // no-time-aware roundContribution (e.g. summing r1+r2 for a cutoff, where
+  // both are already known to be clean).
+  function withPenalty(entry, round) {
+    return entry[round] + (entry[round + 'PenaltySeconds'] || 0);
   }
 
   // An entry's total, aware of the Class's scoring format. Works on a team OR
@@ -530,7 +557,7 @@ const Store = (() => {
 
     if (format === 'one_round') {
       if (entry.r1NoTime) return { total: null, hasNoTime: true, pending: false };
-      if (entry.r1 != null) return { total: entry.r1, hasNoTime: false, pending: false };
+      if (entry.r1 != null) return { total: withPenalty(entry, 'r1'), hasNoTime: false, pending: false };
       return { total: null, hasNoTime: false, pending: true };
     }
 
@@ -551,7 +578,7 @@ const Store = (() => {
       };
     }
     const c2 = roundContribution(entry, 'r2') ?? 999.99;
-    const r1r2 = entry.r1 + c2;
+    const r1r2 = withPenalty(entry, 'r1') + c2;
     const cSG = roundContribution(entry, 'shortGo');
     const total = cSG != null ? r1r2 + cSG : r1r2;
     return {
@@ -572,7 +599,7 @@ const Store = (() => {
     const entries = (cls.teams || []).concat(cls.contestants || []);
     const pool = entries
       .filter(e => e.r1 != null && !e.r1NoTime && e.r2 != null && !e.r2NoTime)
-      .sort((a, b) => (a.r1 + a.r2) - (b.r1 + b.r2))
+      .sort((a, b) => (withPenalty(a, 'r1') + withPenalty(a, 'r2')) - (withPenalty(b, 'r1') + withPenalty(b, 'r2')))
       .slice(0, cls.shortGoSize);
     return new Set(pool.map(e => e.id));
   }
@@ -593,8 +620,8 @@ const Store = (() => {
     if (format === 'one_round') {
       const placed = entries
         .filter(e => e.r1 != null && !e.r1NoTime)
-        .sort((a, b) => a.r1 - b.r1)
-        .map((e, i) => row(e, i + 1, e.r1, null));
+        .sort((a, b) => withPenalty(a, 'r1') - withPenalty(b, 'r1'))
+        .map((e, i) => row(e, i + 1, withPenalty(e, 'r1'), null));
       const noTime = entries.filter(e => e.r1NoTime).map(e => row(e, null, null, 'NT'));
       const pending = entries.filter(e => e.r1 == null && !e.r1NoTime).map(e => row(e, null, null, 'to run'));
       const sections = [{ label: null, rows: placed }];
@@ -686,8 +713,8 @@ const Store = (() => {
         const ran = t[r] != null || t[r + 'NoTime'];
         if (!ran) return;
         const clean = t[r] != null && !t[r + 'NoTime'];
-        credit(t.header, clean, clean ? t[r] : 0);
-        credit(t.heeler, clean, clean ? t[r] : 0);
+        credit(t.header, clean, clean ? withPenalty(t, r) : 0);
+        credit(t.heeler, clean, clean ? withPenalty(t, r) : 0);
       });
     });
     return [...byName.values()]
@@ -723,6 +750,7 @@ const Store = (() => {
     entryTotal,
     shortGoQualifiers,
     classStandings,
-    riderStandings
+    riderStandings,
+    withPenalty
   };
 })();
