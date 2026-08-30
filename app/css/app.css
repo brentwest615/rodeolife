@@ -471,6 +471,7 @@ select.input { cursor: pointer; }
 }
 .rider-row:hover { background: var(--surface-2); }
 .rider-row:last-child { border-bottom: none; }
+.rider-row[hidden] { display: none; }
 
 .rider-name { flex: 1; font-weight: 500; }
 
