@@ -491,6 +491,34 @@ select.input { cursor: pointer; }
   color: var(--text-2);
 }
 
+/* ─── Photo-import review list ───────────────────────────────────────── */
+
+.import-review-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.import-review-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-review-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.import-review-row .input { flex: 1; }
+.import-review-row .import-back { flex: 0 0 80px; }
+
+.import-row-low .input { border-color: #f4d27a; }
+
 /* Sticky generate-draw bar */
 .sticky-actions {
   position: sticky;

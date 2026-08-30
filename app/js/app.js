@@ -35,7 +35,8 @@ function icon(name) {
     calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
     pin: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
     play: '<polygon points="5 3 19 12 5 21 5 3"/>',
-    archive: '<path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>'
+    archive: '<path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>',
+    camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'
   };
   const svg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ''}</svg>`;
   const span = document.createElement('span');
@@ -599,6 +600,10 @@ function panel_signups(rodeo, cls) {
         ]),
         searchInput,
         el('button', {
+          class: 'btn btn-secondary',
+          onclick: () => openImportPhotoModal(rodeo, cls, true)
+        }, [icon('camera'), 'Import from photo']),
+        el('button', {
           class: 'btn btn-primary',
           onclick: () => openRiderModal(rodeo, cls, null)
         }, [icon('plus'), 'Add Rider'])
@@ -625,6 +630,142 @@ function panel_signups(rodeo, cls) {
   ]);
 }
 
+// Cross-rodeo "you've entered this person before" autocomplete — a native
+// <datalist> is the cheapest possible implementation (zero custom dropdown
+// code, the browser renders suggestions for free). Call once per modal;
+// returns the <datalist> element to append into the form, and wires the
+// name input to look up + auto-fill the back-number field on an exact
+// match — only when that field is still empty, so it never clobbers
+// something already typed.
+function wireKnownRiderAutocomplete(nameInput, backInput) {
+  const known = Store.knownRiders();
+  const listId = 'known-riders-' + Math.random().toString(36).slice(2, 8);
+  const datalist = el('datalist', { id: listId }, known.map(k => el('option', { value: k.name })));
+  nameInput.setAttribute('list', listId);
+  nameInput.addEventListener('input', () => {
+    if (!backInput || backInput.value.trim()) return;
+    const match = known.find(k => k.name.toLowerCase() === nameInput.value.trim().toLowerCase());
+    if (match && match.back) backInput.value = match.back;
+  });
+  return datalist;
+}
+
+// ─── Import riders/contestants from a sign-up sheet photo ─────────────────
+// Picks a photo, sends it to the /api/ocr serverless function (the only thing
+// that holds the Anthropic key — this is a public static site, so the key
+// can never live in this file), then shows an editable review list before
+// anything actually gets added. isTeam picks Store.addRider (team roping,
+// role assigned afterward same as manual entry) vs Store.addContestant.
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const comma = result.indexOf(',');
+      resolve({ base64: result.slice(comma + 1), mediaType: file.type || 'image/jpeg' });
+    };
+    reader.onerror = () => reject(new Error('Could not read that photo file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function openImportPhotoModal(rodeo, cls, isTeam) {
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.capture = 'environment';
+  fileInput.style.display = 'none';
+  document.body.appendChild(fileInput);
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    fileInput.remove();
+    if (!file) return;
+    toast('Reading sign-up sheet…', 'info');
+    try {
+      const { base64, mediaType } = await readFileAsBase64(file);
+      const response = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mediaType })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Import failed');
+      if (!data.riders || !data.riders.length) {
+        toast('No names found in that photo', 'warn');
+        return;
+      }
+      openImportReviewModal(rodeo, cls, isTeam, data.riders);
+    } catch (err) {
+      toast(err.message || 'Could not read that photo', 'warn');
+    }
+  });
+
+  fileInput.click();
+}
+
+function openImportReviewModal(rodeo, cls, isTeam, extracted) {
+  const rows = extracted.map((r, i) => ({
+    id: i,
+    checked: true,
+    name: r.name || '',
+    back: r.back_number || '',
+    confidence: r.confidence || 'high'
+  }));
+
+  const list = el('div', { class: 'import-review-list' });
+
+  function rowEl(row) {
+    return el('div', { class: 'import-review-row' + (row.confidence === 'low' ? ' import-row-low' : '') }, [
+      el('input', { type: 'checkbox', checked: row.checked, onchange: e => { row.checked = e.target.checked; } }),
+      el('input', { class: 'input', value: row.name, oninput: e => { row.name = e.target.value; } }),
+      el('input', { class: 'input import-back', value: row.back, placeholder: 'Back #', oninput: e => { row.back = e.target.value; } }),
+      row.confidence === 'low'
+        ? el('span', { class: 'role-tag', title: 'Low confidence — double-check this one' }, [icon('warn'), 'Check'])
+        : null
+    ]);
+  }
+
+  rows.forEach(r => list.appendChild(rowEl(r)));
+
+  const lowCount = rows.filter(r => r.confidence === 'low').length;
+  const note = lowCount > 0
+    ? el('div', { class: 'note' }, [
+        el('strong', {}, `${lowCount} row${lowCount > 1 ? 's' : ''} flagged low-confidence`),
+        ' — double-check the highlighted name(s) before adding.'
+      ])
+    : null;
+
+  const body = el('div', {}, [
+    el('p', { class: 'muted' }, `Found ${rows.length} name${rows.length > 1 ? 's' : ''}. Uncheck any you don't want, fix anything misread.`),
+    note,
+    list
+  ]);
+
+  modal({
+    title: 'Review import',
+    body,
+    actions: [
+      { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
+      { label: isTeam ? 'Add Riders' : 'Add Contestants', class: 'btn btn-primary', onClick: c => {
+        let added = 0, skipped = 0;
+        for (const row of rows) {
+          if (!row.checked) continue;
+          const name = row.name.trim();
+          if (!name) continue;
+          const back = row.back.trim();
+          const newId = isTeam
+            ? Store.addRider(rodeo.id, cls.id, { name, back, isHeader: false, isHeeler: false })
+            : Store.addContestant(rodeo.id, cls.id, { name, back });
+          if (newId === null) skipped++; else added++;
+        }
+        c();
+        toast(`Added ${added}${skipped ? `, skipped ${skipped} duplicate${skipped > 1 ? 's' : ''}` : ''}`, added ? 'success' : 'warn');
+      } }
+    ]
+  });
+}
+
 function openRiderModal(rodeo, cls, rider) {
   const isEdit = !!rider;
   let role = rider ? (rider.isHeader && rider.isHeeler ? 'both' : rider.isHeader ? 'header' : rider.isHeeler ? 'heeler' : 'header') : 'header';
@@ -634,6 +775,10 @@ function openRiderModal(rodeo, cls, rider) {
     <label class="field">
       <span class="field-label">Rider name</span>
       <input class="input" name="name" required autocomplete="off" placeholder="Last, First">
+    </label>
+    <label class="field">
+      <span class="field-label">Back number <span class="muted">(optional)</span></span>
+      <input class="input" name="back" autocomplete="off" placeholder="42">
     </label>
     <div class="field">
       <span class="field-label">Role</span>
@@ -646,7 +791,12 @@ function openRiderModal(rodeo, cls, rider) {
   `;
 
   const nameInput = form.querySelector('[name=name]');
-  if (rider) nameInput.value = rider.name;
+  const backInput = form.querySelector('[name=back]');
+  if (rider) {
+    nameInput.value = rider.name;
+    backInput.value = rider.back || '';
+  }
+  form.appendChild(wireKnownRiderAutocomplete(nameInput, backInput));
 
   const setRole = v => {
     role = v;
@@ -663,22 +813,24 @@ function openRiderModal(rodeo, cls, rider) {
   const apply = (close, addAnother = false) => {
     const name = nameInput.value.trim();
     if (!name) { nameInput.focus(); return; }
+    const back = backInput.value.trim();
     const flags = {
       isHeader: role === 'header' || role === 'both',
       isHeeler: role === 'heeler' || role === 'both'
     };
     if (isEdit) {
-      Store.updateRider(rodeo.id, cls.id, rider.id, { name, ...flags });
+      Store.updateRider(rodeo.id, cls.id, rider.id, { name, back, ...flags });
       close();
       toast('Rider updated');
     } else {
-      const newId = Store.addRider(rodeo.id, cls.id, { name, ...flags });
+      const newId = Store.addRider(rodeo.id, cls.id, { name, back, ...flags });
       if (newId === null) {
         toast('That name already exists', 'warn');
         return;
       }
       if (addAnother) {
         nameInput.value = '';
+        backInput.value = '';
         nameInput.focus();
         toast(`Added ${name}`, 'success');
       } else {
@@ -767,6 +919,10 @@ function panel_signups_solo(rodeo, cls) {
         ]),
         searchInput,
         el('button', {
+          class: 'btn btn-secondary',
+          onclick: () => openImportPhotoModal(rodeo, cls, false)
+        }, [icon('camera'), 'Import from photo']),
+        el('button', {
           class: 'btn btn-primary',
           onclick: () => openContestantModal(rodeo, cls, null)
         }, [icon('plus'), 'Add Contestant'])
@@ -803,6 +959,7 @@ function openContestantModal(rodeo, cls, contestant) {
     nameInput.value = contestant.name;
     backInput.value = contestant.back || '';
   }
+  form.appendChild(wireKnownRiderAutocomplete(nameInput, backInput));
 
   const apply = (close, addAnother = false) => {
     const name = nameInput.value.trim();

@@ -233,6 +233,28 @@ const Store = (() => {
     return data.rodeos[id] || null;
   }
 
+  // Every rider/contestant ever entered across every rodeo in the shared
+  // backend, deduped by name — the same circuit's kids show up again and
+  // again, so this powers a "you've seen this name before" autocomplete
+  // instead of retyping full names + back numbers every time. Purely derived
+  // from data already loaded in memory; no separate roster table. Iterates
+  // oldest-rodeo-first so a more recent back number (someone's number can
+  // change rodeo to rodeo) wins over an older one for the same name.
+  function knownRiders() {
+    const byName = new Map();
+    const oldestFirst = [...listRodeos()].reverse();
+    for (const rodeo of oldestFirst) {
+      for (const cls of rodeo.classes || []) {
+        for (const person of [...(cls.riders || []), ...(cls.contestants || [])]) {
+          const key = person.name.trim().toLowerCase();
+          if (!key) continue;
+          byName.set(key, { name: person.name.trim(), back: (person.back || '').trim() });
+        }
+      }
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   function createRodeo({ name, date = '', location = '' }) {
     const now = Date.now();
     const id = uuid();
@@ -329,13 +351,13 @@ const Store = (() => {
 
   // ─── Riders (team_roping classes only) ─────────────────────────────────
 
-  function addRider(rodeoId, classId, { name, isHeader, isHeeler }) {
+  function addRider(rodeoId, classId, { name, isHeader, isHeeler, back }) {
     const cls = getClass(rodeoId, classId);
     if (!cls) return null;
     const trimmed = (name || '').trim();
     if (!trimmed) return null;
     if (cls.riders.some(r => r.name.toLowerCase() === trimmed.toLowerCase())) return null;
-    const rider = { id: uuid(), name: trimmed, isHeader: !!isHeader, isHeeler: !!isHeeler };
+    const rider = { id: uuid(), name: trimmed, isHeader: !!isHeader, isHeeler: !!isHeeler, back: (back || '').trim() };
     cls.riders.push(rider);
     touch(rodeoId);
     return rider.id;
@@ -354,6 +376,7 @@ const Store = (() => {
     }
     if (patch.isHeader !== undefined) r.isHeader = !!patch.isHeader;
     if (patch.isHeeler !== undefined) r.isHeeler = !!patch.isHeeler;
+    if (patch.back !== undefined) r.back = patch.back.trim();
     touch(rodeoId);
   }
 
@@ -454,6 +477,7 @@ const Store = (() => {
     subscribe,
     listRodeos,
     getRodeo,
+    knownRiders,
     createRodeo,
     updateRodeo,
     setStatus,
