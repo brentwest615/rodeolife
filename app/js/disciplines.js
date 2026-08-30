@@ -58,3 +58,19 @@ const NO_TIME_REASONS = {
 function reasonsFor(code) {
   return NO_TIME_REASONS[code] || ['Time limit', 'Scratch'];
 }
+
+// Scoring formats a Class can use — ported from the mobile app's three
+// real (fully-implemented) formats. "Round-robin" isn't a format here: it's
+// an alternate standings VIEW (by rider) on top of team roping's existing
+// pairing-based entries, see Store.riderStandings.
+const CLASS_FORMATS = ['one_round', 'two_round', 'two_round_progressive'];
+
+const FORMAT_LABELS = {
+  one_round: 'One round',
+  two_round: 'Two round (average)',
+  two_round_progressive: 'Two round progressive'
+};
+
+function formatLabel(code) {
+  return FORMAT_LABELS[code] || code;
+}

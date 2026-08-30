@@ -454,6 +454,11 @@ function view_standings_rodeo(rodeoId) {
   return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
 }
 
+// Team roping only — "by pairing" (the existing per-team view) vs "by rider"
+// (round-robin/Texas-style aggregate, see Store.riderStandings). Module
+// scope so it survives re-renders, same pattern as timesView/timesSort.
+let standingsViewMode = 'pairing';
+
 function view_standings_class(rodeoId, classId) {
   const rodeo = Store.getRodeo(rodeoId);
   const cls = rodeo && Store.getClass(rodeoId, classId);
@@ -465,6 +470,7 @@ function view_standings_class(rodeoId, classId) {
   const team = isTeamDiscipline(cls.discipline);
   const entries = team ? cls.teams : cls.contestants;
   const decimals = decimalsFor(cls.discipline);
+  const rounds = roundsForClass(cls);
 
   const header = el('header', { class: 'app-header' }, [
     el('div', { class: 'brand-row' }, [
@@ -476,29 +482,44 @@ function view_standings_class(rodeoId, classId) {
     ])
   ]);
 
+  const viewModeToggle = () => el('div', { class: 'view-toggle' }, [
+    el('button', {
+      class: 'btn btn-ghost' + (standingsViewMode === 'pairing' ? ' is-active' : ''),
+      onclick: () => { standingsViewMode = 'pairing'; render(); }
+    }, 'By pairing'),
+    el('button', {
+      class: 'btn btn-ghost' + (standingsViewMode === 'rider' ? ' is-active' : ''),
+      onclick: () => { standingsViewMode = 'rider'; render(); }
+    }, 'By rider')
+  ]);
+
   let main;
   if (entries.length === 0) {
     main = el('div', { class: 'empty-state' }, [
       el('p', { class: 'muted' }, 'No one has run yet — check back soon.')
     ]);
-  } else {
-    const ranked = [...entries].sort((a, b) => {
-      const ta = Store.entryTotal(a), tb = Store.entryTotal(b);
-      if (ta.total != null && tb.total != null) return ta.total - tb.total;
-      if (ta.total != null) return -1;
-      if (tb.total != null) return 1;
-      return 0;
-    });
+  } else if (team && standingsViewMode === 'rider') {
+    const ranked = Store.riderStandings(cls);
     main = el('div', { class: 'page' }, [
-      el('div', { class: 'times-list' }, ranked.map((entry, i) => standingsRowReadOnly(entry, i + 1, team, decimals)))
+      viewModeToggle(),
+      el('div', { class: 'times-list' }, ranked.map(r => riderStandingsRowReadOnly(r, decimals)))
+    ]);
+  } else {
+    const { sections } = Store.classStandings(cls);
+    main = el('div', { class: 'page' }, [
+      team ? viewModeToggle() : null,
+      ...sections.filter(s => s.rows.length).map(s => el('div', { class: 'standings-section' }, [
+        s.label ? el('div', { class: 'standings-section-label' }, s.label) : null,
+        el('div', { class: 'times-list' }, s.rows.map(row => standingsRowReadOnly(row, team, decimals, rounds)))
+      ]))
     ]);
   }
 
   return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
 }
 
-function standingsRowReadOnly(entry, rank, team, decimals) {
-  const { total, hasNoTime } = Store.entryTotal(entry);
+function standingsRowReadOnly(row, team, decimals, rounds) {
+  const { entry, rank, total, badge } = row;
   const nameEl = team
     ? el('div', { class: 'draw-pair' }, [
         el('span', { class: 'rider header-name' }, entry.header),
@@ -510,16 +531,29 @@ function standingsRowReadOnly(entry, rank, team, decimals) {
         entry.back ? el('span', { class: 'pair-sep muted' }, '#' + entry.back) : null
       ]);
   const roundText = (key) => entry[key + 'NoTime'] ? 'NT' : (entry[key] != null ? entry[key].toFixed(decimals) : '—');
+  const isNoTimeBadge = badge === 'NT' || badge === 'NT round 1';
   return el('div', { class: 'times-row times-row-readonly' }, [
-    el('span', { class: 'draw-num' }, String(rank)),
+    el('span', { class: 'draw-num' }, rank != null ? String(rank) : '—'),
     nameEl,
-    el('span', { class: 'ro-time' }, roundText('r1')),
-    el('span', { class: 'ro-time' }, roundText('r2')),
-    el('span', { class: 'ro-time' }, roundText('shortGo')),
-    el('div', { class: 'times-total' + (hasNoTime ? ' has-no-time' : '') }, [
+    ...rounds.map(r => el('span', { class: 'ro-time' }, roundText(r))),
+    badge ? el('span', { class: 'row-badge' + (isNoTimeBadge ? ' row-badge-nt' : '') }, badge) : null,
+    el('div', { class: 'times-total' + (isNoTimeBadge ? ' has-no-time' : '') }, [
       el('span', { class: 'times-total-label' }, 'Total'),
       el('span', { class: 'times-total-value' },
-        total != null ? total.toFixed(decimals) : (hasNoTime ? 'NT' : '—'))
+        total != null ? total.toFixed(decimals) : (badge || '—'))
+    ])
+  ]);
+}
+
+function riderStandingsRowReadOnly(r, decimals) {
+  return el('div', { class: 'times-row times-row-readonly' }, [
+    el('span', { class: 'draw-num' }, r.rank != null ? String(r.rank) : '—'),
+    el('div', { class: 'draw-pair' }, [el('span', { class: 'rider header-name' }, r.name)]),
+    el('span', { class: 'ro-time' }, `${r.catches} catch${r.catches === 1 ? '' : 'es'}`),
+    el('span', { class: 'ro-time' }, `${r.runs} run${r.runs === 1 ? '' : 's'}`),
+    el('div', { class: 'times-total' }, [
+      el('span', { class: 'times-total-label' }, 'Time'),
+      el('span', { class: 'times-total-value' }, r.catches > 0 ? r.totalTime.toFixed(decimals) : '—')
     ])
   ]);
 }
@@ -1161,6 +1195,29 @@ let timesView = 'wizard';
 let wizardRound = 'r1';
 
 const ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'Short Go' };
+const SHORT_ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'SG' };
+
+// Which rounds a Class's format actually uses — drives round chips in the
+// wizard and which time columns appear in the spreadsheet. The short-go
+// round only exists once a cutoff is configured (see openEditClassModal).
+function roundsForClass(cls) {
+  if (cls.format === 'one_round') return ['r1'];
+  if (cls.format === 'two_round') return ['r1', 'r2'];
+  return cls.shortGoSize ? ['r1', 'r2', 'shortGo'] : ['r1', 'r2'];
+}
+
+// Whether a given entry may have a time entered for `round` at all, per the
+// class's format. one_round/two_round never gate — every entry can run
+// every round in `roundsForClass`. two_round_progressive gates r2 on a clean
+// r1 (a no-time or not-yet-run r1 means "did not advance"), and gates the
+// short-go round on the top-N cutoff (see Store.shortGoQualifiers).
+function isRoundEligible(cls, entry, round, qualifiers) {
+  if (round === 'r1') return true;
+  if (cls.format !== 'two_round_progressive') return true;
+  if (round === 'r2') return entry.r1 != null && !entry.r1NoTime;
+  if (round === 'shortGo') return !!(qualifiers && qualifiers.has(entry.id));
+  return true;
+}
 
 function entryDisplayName(cls, entry) {
   return isTeamDiscipline(cls.discipline) ? `${entry.header} / ${entry.heeler}` : entry.name;
@@ -1262,9 +1319,12 @@ function panel_times(rodeo, cls) {
     return el('div', { class: 'page' }, [viewToggle, panel_times_wizard(rodeo, cls, team, entries, decimals)]);
   }
 
+  const rounds = roundsForClass(cls);
+  const qualifiers = cls.format === 'two_round_progressive' ? Store.shortGoQualifiers(cls) : null;
+
   const rows = timesSort === 'standings'
     ? [...entries].sort((a, b) => {
-        const ta = Store.entryTotal(a), tb = Store.entryTotal(b);
+        const ta = Store.entryTotal(a, cls), tb = Store.entryTotal(b, cls);
         if (ta.total != null && tb.total != null) return ta.total - tb.total;
         if (ta.total != null) return -1;
         if (tb.total != null) return 1;
@@ -1274,7 +1334,7 @@ function panel_times(rodeo, cls) {
 
   const list = el('div', { class: 'times-list' });
   rows.forEach(entry => {
-    const { total, hasNoTime } = Store.entryTotal(entry);
+    const { total, hasNoTime } = Store.entryTotal(entry, cls);
     const nameEl = team
       ? el('div', { class: 'draw-pair' }, [
           el('span', { class: 'rider header-name' }, entry.header),
@@ -1288,9 +1348,11 @@ function panel_times(rodeo, cls) {
     list.appendChild(el('div', { class: 'times-row' }, [
       el('span', { class: 'draw-num' }, String(entries.indexOf(entry) + 1)),
       nameEl,
-      timeField(rodeo, cls, entry, 'r1', 'R1', decimals),
-      timeField(rodeo, cls, entry, 'r2', 'R2', decimals),
-      timeField(rodeo, cls, entry, 'shortGo', 'SG', decimals),
+      ...rounds.map(r => {
+        const eligible = isRoundEligible(cls, entry, r, qualifiers);
+        const gateReason = eligible ? null : (r === 'r2' ? 'Did not advance' : 'Not in short go');
+        return timeField(rodeo, cls, entry, r, SHORT_ROUND_LABELS[r], decimals, gateReason);
+      }),
       el('div', { class: 'times-total' + (hasNoTime ? ' has-no-time' : '') }, [
         el('span', { class: 'times-total-label' }, 'Total'),
         el('span', { class: 'times-total-value' },
@@ -1323,13 +1385,17 @@ function panel_times(rodeo, cls) {
 // logic needed. "Jump to a rider" drops into the spreadsheet view for
 // out-of-order corrections (see the tradeoffs surfaced in the design pass).
 function panel_times_wizard(rodeo, cls, team, entries, decimals) {
+  const rounds = roundsForClass(cls);
+  if (!rounds.includes(wizardRound)) wizardRound = rounds[0];
   const round = wizardRound;
   const roundLabel = ROUND_LABELS[round];
-  const untimed = entries.filter(e => e[round] == null && !e[round + 'NoTime']);
-  const timedCount = entries.length - untimed.length;
-  const pct = entries.length ? Math.round((timedCount / entries.length) * 100) : 0;
+  const qualifiers = cls.format === 'two_round_progressive' ? Store.shortGoQualifiers(cls) : null;
+  const eligible = entries.filter(e => isRoundEligible(cls, e, round, qualifiers));
+  const untimed = eligible.filter(e => e[round] == null && !e[round + 'NoTime']);
+  const timedCount = eligible.length - untimed.length;
+  const pct = eligible.length ? Math.round((timedCount / eligible.length) * 100) : 0;
 
-  const roundChips = el('div', { class: 'round-chips' }, ['r1', 'r2', 'shortGo'].map(r =>
+  const roundChips = el('div', { class: 'round-chips' }, rounds.map(r =>
     el('button', {
       type: 'button',
       class: 'chip' + (wizardRound === r ? ' active' : ''),
@@ -1338,9 +1404,24 @@ function panel_times_wizard(rodeo, cls, team, entries, decimals) {
   ));
 
   const progress = el('div', { class: 'progress-line' }, [
-    el('span', {}, `${timedCount} of ${entries.length} timed`),
+    el('span', {}, `${timedCount} of ${eligible.length} timed`),
     el('div', { class: 'progress-track' }, [el('div', { class: 'progress-fill', style: `width:${pct}%` })])
   ]);
+
+  if (eligible.length === 0) {
+    return el('div', {}, [
+      roundChips,
+      progress,
+      el('div', { class: 'empty-state' }, [
+        el('div', { class: 'empty-illustration' }, '⏳'),
+        el('h2', {}, `No one has qualified for ${roundLabel} yet`),
+        el('p', { class: 'muted' }, round === 'r2'
+          ? 'Entries advance to Round 2 once they post a clean Round 1 time.'
+          : 'The short-go field is set once enough Round 1 + Round 2 times are in.'),
+        el('button', { class: 'btn btn-primary', onclick: () => { timesView = 'spreadsheet'; render(); } }, 'Go to spreadsheet view')
+      ])
+    ]);
+  }
 
   if (untimed.length === 0) {
     return el('div', {}, [
@@ -1413,7 +1494,13 @@ function panel_times_wizard(rodeo, cls, team, entries, decimals) {
 // toggle. Uses onchange (commits on blur/Enter), not oninput — every Store
 // write triggers a full app re-render (see render()/Store.subscribe below),
 // which would otherwise steal focus back after every keystroke.
-function timeField(rodeo, cls, entry, round, label, decimals) {
+function timeField(rodeo, cls, entry, round, label, decimals, gateReason) {
+  if (gateReason) {
+    return el('div', { class: 'time-field' }, [
+      el('label', { class: 'time-field-label' }, label),
+      el('div', { class: 'time-field-gated', title: gateReason }, gateReason)
+    ]);
+  }
   const noTimeKey = round + 'NoTime';
   const isNoTime = !!entry[noTimeKey];
   const input = el('input', {
@@ -1560,6 +1647,7 @@ function openEditRodeoModal(rodeo) {
 
 function openCreateClassModal(rodeo) {
   let discipline = DISCIPLINES[0].code;
+  let format = 'two_round_progressive';
   const form = el('form', { class: 'form' });
   form.innerHTML = `
     <label class="field">
@@ -1572,22 +1660,40 @@ function openCreateClassModal(rodeo) {
         ${DISCIPLINES.map(d => `<label class="role-option" data-value="${d.code}"><input type="radio" name="discipline" value="${d.code}"> ${d.label}</label>`).join('')}
       </div>
     </div>
+    <div class="field">
+      <span class="field-label">Format</span>
+      <div class="role-chooser format-chooser" id="format-chooser">
+        ${CLASS_FORMATS.map(f => `<label class="role-option" data-value="${f}"><input type="radio" name="format" value="${f}"> ${formatLabel(f)}</label>`).join('')}
+      </div>
+      <span class="muted small">You can set the short-go cutoff later, once entries start running.</span>
+    </div>
   `;
   const nameInput = form.querySelector('[name=name]');
 
   const setDiscipline = v => {
     discipline = v;
-    form.querySelectorAll('.role-option').forEach(o => {
+    form.querySelectorAll('#discipline-chooser .role-option').forEach(o => {
       o.classList.toggle('selected', o.dataset.value === v);
       o.querySelector('input').checked = o.dataset.value === v;
     });
     if (!nameInput.dataset.touched) nameInput.value = disciplineLabel(v);
   };
-  form.querySelectorAll('.role-option').forEach(o => {
+  const setFormat = v => {
+    format = v;
+    form.querySelectorAll('#format-chooser .role-option').forEach(o => {
+      o.classList.toggle('selected', o.dataset.value === v);
+      o.querySelector('input').checked = o.dataset.value === v;
+    });
+  };
+  form.querySelectorAll('#discipline-chooser .role-option').forEach(o => {
     o.addEventListener('click', e => { e.preventDefault(); setDiscipline(o.dataset.value); });
+  });
+  form.querySelectorAll('#format-chooser .role-option').forEach(o => {
+    o.addEventListener('click', e => { e.preventDefault(); setFormat(o.dataset.value); });
   });
   nameInput.addEventListener('input', () => { nameInput.dataset.touched = '1'; });
   setDiscipline(discipline);
+  setFormat(format);
 
   modal({
     title: 'Add Class',
@@ -1596,7 +1702,7 @@ function openCreateClassModal(rodeo) {
       { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
       { label: 'Add Class', class: 'btn btn-primary', onClick: c => {
         const name = nameInput.value.trim();
-        const id = Store.createClass(rodeo.id, { name, discipline });
+        const id = Store.createClass(rodeo.id, { name, discipline, format });
         c();
         if (id) { navigate(`/rodeo/${rodeo.id}/class/${id}/signups`); toast('Class added'); }
       } }
@@ -1610,6 +1716,7 @@ function openCreateClassModal(rodeo) {
 }
 
 function openEditClassModal(rodeo, cls) {
+  let format = cls.format || 'two_round';
   const form = el('form', { class: 'form' });
   form.innerHTML = `
     <label class="field">
@@ -1617,7 +1724,32 @@ function openEditClassModal(rodeo, cls) {
       <input class="input" name="name" required value="${escHtml(cls.name)}">
     </label>
     <p class="muted small">Discipline: ${escHtml(disciplineLabel(cls.discipline))} (can't be changed after entries exist)</p>
+    <div class="field">
+      <span class="field-label">Format</span>
+      <div class="role-chooser format-chooser" id="format-chooser">
+        ${CLASS_FORMATS.map(f => `<label class="role-option" data-value="${f}"><input type="radio" name="format" value="${f}"> ${formatLabel(f)}</label>`).join('')}
+      </div>
+    </div>
+    <label class="field" id="shortgo-field" hidden>
+      <span class="field-label">Short-go cutoff <span class="muted">(top N advance)</span></span>
+      <input class="input" name="shortGoSize" type="number" min="1" inputmode="numeric" placeholder="e.g. 10" value="${cls.shortGoSize || ''}">
+    </label>
   `;
+  const shortGoField = form.querySelector('#shortgo-field');
+  const shortGoInput = form.querySelector('[name=shortGoSize]');
+
+  const setFormat = v => {
+    format = v;
+    form.querySelectorAll('#format-chooser .role-option').forEach(o => {
+      o.classList.toggle('selected', o.dataset.value === v);
+      o.querySelector('input').checked = o.dataset.value === v;
+    });
+    shortGoField.hidden = v !== 'two_round_progressive';
+  };
+  form.querySelectorAll('#format-chooser .role-option').forEach(o => {
+    o.addEventListener('click', e => { e.preventDefault(); setFormat(o.dataset.value); });
+  });
+  setFormat(format);
 
   modal({
     title: 'Edit Class',
@@ -1635,7 +1767,7 @@ function openEditClassModal(rodeo, cls) {
       { label: 'Save', class: 'btn btn-primary', onClick: c => {
         const name = form.querySelector('[name=name]').value.trim();
         if (!name) return;
-        Store.updateClass(rodeo.id, cls.id, { name });
+        Store.updateClass(rodeo.id, cls.id, { name, format, shortGoSize: shortGoInput.value });
         c();
         toast('Class updated');
       } }

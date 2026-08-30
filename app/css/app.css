@@ -668,6 +668,20 @@ select.input { cursor: pointer; }
   white-space: nowrap;
 }
 
+.time-field-gated {
+  width: 92px;
+  padding: 8px 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ─── Times: view toggle + wizard ────────────────────────────────────── */
 
 .view-toggle {
@@ -821,6 +835,30 @@ select.input { cursor: pointer; }
   font-size: 0.95rem;
   color: var(--text-2);
 }
+
+.standings-section + .standings-section { margin-top: 22px; }
+
+.standings-section-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 20px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  white-space: nowrap;
+}
+.row-badge.row-badge-nt { background: var(--warning-soft); color: var(--warning); }
 
 /* ─── Slips ──────────────────────────────────────────────────────────── */
 
@@ -1000,6 +1038,9 @@ select.input { cursor: pointer; }
 /* Discipline names run longer than Header/Heeler/Both — 2 columns instead of
    3 keeps each label on one line, which matters more on a phone screen. */
 .discipline-chooser { grid-template-columns: repeat(2, 1fr); }
+
+/* Format labels ("Two round progressive") are longer still — stack them. */
+.format-chooser { grid-template-columns: 1fr; }
 
 /* ─── Toast ──────────────────────────────────────────────────────────── */
 

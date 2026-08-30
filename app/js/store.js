@@ -28,6 +28,8 @@
  *   {
  *     id, name,               // producer label, e.g. "1D Roping", "Open Barrels"
  *     discipline,             // see disciplines.js DISCIPLINES
+ *     format,                 // 'one_round' | 'two_round' | 'two_round_progressive'
+ *     shortGoSize,            // number|null — top-N cutoff, two_round_progressive only
  *     // team_roping ONLY:
  *     riders: { id, name, isHeader, isHeeler }[],
  *     teams: { id, header, heeler, conflict,
@@ -90,15 +92,60 @@ const Store = (() => {
       // pre-Supabase local data, upload it now so it isn't stranded.
       const legacy = migrateLegacyLocalData();
       for (const rodeo of Object.values(legacy)) {
+        backfillRodeo(rodeo);
         data.rodeos[rodeo.id] = rodeo;
         upsertRemote(rodeo);
       }
     } else {
-      for (const row of rows) data.rodeos[row.id] = row.data;
+      // Every field ever added after a class already existed (NoTime
+      // reasons, scoring formats, ...) needs backfilling here too, on the
+      // NORMAL load path — not just the empty-backend migration path above.
+      // A live rodeo on the shared backend goes through this branch on
+      // every single load, so this is where real production data actually
+      // picks up new fields.
+      for (const row of rows) {
+        backfillRodeo(row.data);
+        data.rodeos[row.id] = row.data;
+      }
     }
 
     subscribeRealtime();
     notify();
+  }
+
+  // Fills in any field added to the schema after a rodeo/class already
+  // existed, so old data loaded fresh from Supabase behaves identically to
+  // a class created today. Mutates `rodeo` in place; safe to call on every
+  // load (idempotent — only touches fields that are actually missing).
+  function backfillRodeo(rodeo) {
+    for (const cls of rodeo.classes || []) {
+      if (isTeamDiscipline(cls.discipline) && !cls.riders) {
+        const headerSet = new Set((cls.headers || []).map(n => n.trim()).filter(Boolean));
+        const heelerSet = new Set((cls.heelers || []).map(n => n.trim()).filter(Boolean));
+        const all = new Set([...headerSet, ...heelerSet]);
+        cls.riders = [...all].map(name => ({
+          id: uuid(), name,
+          isHeader: headerSet.has(name), isHeeler: heelerSet.has(name)
+        }));
+        delete cls.headers;
+        delete cls.heelers;
+      }
+      if (!cls.contestants) cls.contestants = [];
+      // Classes created before scoring formats existed default to 'two_round'
+      // (average, no gating) — the safe migration choice, since it changes
+      // nothing about who can enter what vs. today's behavior. Only NEW
+      // classes (see createClass) default to 'two_round_progressive'.
+      if (cls.format === undefined) cls.format = 'two_round';
+      if (cls.shortGoSize === undefined) cls.shortGoSize = null;
+      for (const t of (cls.teams || []).concat(cls.contestants || [])) {
+        if (t.id === undefined) t.id = uuid();
+        for (const key of ['r1', 'r2', 'shortGo']) {
+          if (t[key] === undefined) t[key] = null;
+          if (t[key + 'NoTime'] === undefined) t[key + 'NoTime'] = false;
+          if (t[key + 'NoTimeReason'] === undefined) t[key + 'NoTimeReason'] = null;
+        }
+      }
+    }
   }
 
   // Reads the OLD localStorage-only schema (v1 events, or v2 rodeos saved
@@ -143,32 +190,6 @@ const Store = (() => {
       }
     }
     if (!rodeos) return {};
-
-    // Backfill anything from before live time entry / the Rodeo-Class split.
-    for (const rodeo of Object.values(rodeos)) {
-      for (const cls of rodeo.classes || []) {
-        if (isTeamDiscipline(cls.discipline) && !cls.riders) {
-          const headerSet = new Set((cls.headers || []).map(n => n.trim()).filter(Boolean));
-          const heelerSet = new Set((cls.heelers || []).map(n => n.trim()).filter(Boolean));
-          const all = new Set([...headerSet, ...heelerSet]);
-          cls.riders = [...all].map(name => ({
-            id: uuid(), name,
-            isHeader: headerSet.has(name), isHeeler: heelerSet.has(name)
-          }));
-          delete cls.headers;
-          delete cls.heelers;
-        }
-        if (!cls.contestants) cls.contestants = [];
-        for (const t of (cls.teams || []).concat(cls.contestants || [])) {
-          if (t.id === undefined) t.id = uuid();
-          for (const key of ['r1', 'r2', 'shortGo']) {
-            if (t[key] === undefined) t[key] = null;
-            if (t[key + 'NoTime'] === undefined) t[key + 'NoTime'] = false;
-            if (t[key + 'NoTimeReason'] === undefined) t[key + 'NoTimeReason'] = null;
-          }
-        }
-      }
-    }
     return rodeos;
   }
 
@@ -322,7 +343,7 @@ const Store = (() => {
     return (rodeo.classes || []).find(c => c.id === classId) || null;
   }
 
-  function createClass(rodeoId, { name, discipline }) {
+  function createClass(rodeoId, { name, discipline, format }) {
     const rodeo = data.rodeos[rodeoId];
     if (!rodeo) return null;
     const id = uuid();
@@ -330,6 +351,8 @@ const Store = (() => {
       id,
       name: (name || '').trim() || disciplineLabel(discipline),
       discipline,
+      format: format || 'two_round_progressive',
+      shortGoSize: null,
       riders: [],
       teams: [],
       contestants: []
@@ -345,6 +368,16 @@ const Store = (() => {
       const trimmed = patch.name.trim();
       if (trimmed) cls.name = trimmed;
     }
+    if (patch.format !== undefined && CLASS_FORMATS.includes(patch.format)) {
+      cls.format = patch.format;
+    }
+    if (patch.shortGoSize !== undefined) {
+      const n = parseInt(patch.shortGoSize, 10);
+      cls.shortGoSize = Number.isFinite(n) && n > 0 ? n : null;
+    }
+    // Applied last, keyed off the FINAL format, regardless of patch order —
+    // a shortGoSize value never survives on a class that isn't progressive.
+    if (cls.format !== 'two_round_progressive') cls.shortGoSize = null;
     touch(rodeoId);
   }
 
@@ -462,20 +495,204 @@ const Store = (() => {
     touch(rodeoId);
   }
 
-  // An entry's total is the sum of its entered real times. `hasNoTime` flags
-  // any no-time round so standings can sort real totals above partial/no-time
-  // ones — the same "real time beats no-time" rule used across every scoring
-  // view. Works on a team OR a contestant; both carry the same round fields.
-  function entryTotal(entry) {
-    const rounds = ['r1', 'r2', 'shortGo'];
-    let sum = 0;
-    let anyReal = false;
-    let anyNoTime = false;
-    for (const r of rounds) {
-      if (entry[r + 'NoTime']) anyNoTime = true;
-      else if (entry[r] != null) { sum += entry[r]; anyReal = true; }
+  // A round's numeric contribution to a total: a no-time is the NLBRA-style
+  // 999.99 stand-in (a real time always beats it), a real time is itself,
+  // and "not yet run" is null — the caller decides whether null also means
+  // 999.99 (two_round: yes, matches the mobile app) or "still pending"
+  // (progressive: a not-yet-run round doesn't retroactively count against
+  // someone who hasn't had the chance to run it, except where the mobile
+  // app's own rule already treats a pending R2 as 999.99 — see below).
+  function roundContribution(entry, round) {
+    if (entry[round + 'NoTime']) return 999.99;
+    return entry[round] != null ? entry[round] : null;
+  }
+
+  // An entry's total, aware of the Class's scoring format. Works on a team OR
+  // a contestant; both carry the same round fields. `cls` is required for
+  // anything beyond a bare no-op default — every call site has a Class handy.
+  //
+  //   one_round:              only r1 matters; returns `pending: true` for an
+  //                           unrun entry instead of folding it into the total.
+  //   two_round:              total = r1 + r2 contributions; a no-time OR an
+  //                           unrun round both count as 999.99 (ports the
+  //                           mobile app's "average" format exactly).
+  //   two_round_progressive:  r1 must be clean to "advance" (`advanced: true`);
+  //                           an unrun/no-time r1 returns total: null with
+  //                           `advanced: false` or `pending: true`. Once
+  //                           advanced, total = r1 + r2-contribution (r2
+  //                           pending also counts as 999.99, same mobile
+  //                           rule), plus a short-go contribution on top if
+  //                           one has been entered (only finalists — see
+  //                           shortGoQualifiers — are ever given a short-go
+  //                           time by the UI, so this needs no extra gating).
+  function entryTotal(entry, cls) {
+    const format = (cls && cls.format) || 'two_round';
+
+    if (format === 'one_round') {
+      if (entry.r1NoTime) return { total: null, hasNoTime: true, pending: false };
+      if (entry.r1 != null) return { total: entry.r1, hasNoTime: false, pending: false };
+      return { total: null, hasNoTime: false, pending: true };
     }
-    return { total: anyReal ? sum : null, hasNoTime: anyNoTime };
+
+    if (format === 'two_round') {
+      const c1 = roundContribution(entry, 'r1') ?? 999.99;
+      const c2 = roundContribution(entry, 'r2') ?? 999.99;
+      return { total: c1 + c2, hasNoTime: !!entry.r1NoTime || !!entry.r2NoTime };
+    }
+
+    // two_round_progressive
+    const r1Clean = entry.r1 != null && !entry.r1NoTime;
+    if (!r1Clean) {
+      return {
+        total: null,
+        hasNoTime: !!entry.r1NoTime,
+        pending: entry.r1 == null && !entry.r1NoTime,
+        advanced: false
+      };
+    }
+    const c2 = roundContribution(entry, 'r2') ?? 999.99;
+    const r1r2 = entry.r1 + c2;
+    const cSG = roundContribution(entry, 'shortGo');
+    const total = cSG != null ? r1r2 + cSG : r1r2;
+    return {
+      total,
+      hasNoTime: !!entry.r2NoTime || !!entry.shortGoNoTime,
+      advanced: true,
+      r2Pending: entry.r2 == null && !entry.r2NoTime
+    };
+  }
+
+  // Which entries (by id) qualify for the short-go round: clean in BOTH r1
+  // and r2, ranked by combined r1+r2 time, top `shortGoSize` of them. Exact
+  // port of the mobile app's cutoff rule. Returns null when there's no cutoff
+  // to apply (not a progressive class, or no shortGoSize configured yet) —
+  // callers treat null as "no restriction," not "nobody qualifies."
+  function shortGoQualifiers(cls) {
+    if (cls.format !== 'two_round_progressive' || !cls.shortGoSize) return null;
+    const entries = (cls.teams || []).concat(cls.contestants || []);
+    const pool = entries
+      .filter(e => e.r1 != null && !e.r1NoTime && e.r2 != null && !e.r2NoTime)
+      .sort((a, b) => (a.r1 + a.r2) - (b.r1 + b.r2))
+      .slice(0, cls.shortGoSize);
+    return new Set(pool.map(e => e.id));
+  }
+
+  // Full standings for a Class, sectioned per the scoring format — the single
+  // source of truth both the producer's standings view and the read-only
+  // parent-facing page render from, so they can never drift. Collapses the
+  // mobile app's six-way progressive breakdown into three section headers
+  // (Short-go finalists / Everyone else / Did not advance / Still to run),
+  // carrying the same information via a per-row `badge` instead — same facts,
+  // less scrolling during live use.
+  function classStandings(cls) {
+    const team = isTeamDiscipline(cls.discipline);
+    const entries = team ? (cls.teams || []) : (cls.contestants || []);
+    const format = cls.format || 'two_round';
+    const row = (entry, rank, total, badge) => ({ entry, rank, total, badge });
+
+    if (format === 'one_round') {
+      const placed = entries
+        .filter(e => e.r1 != null && !e.r1NoTime)
+        .sort((a, b) => a.r1 - b.r1)
+        .map((e, i) => row(e, i + 1, e.r1, null));
+      const noTime = entries.filter(e => e.r1NoTime).map(e => row(e, null, null, 'NT'));
+      const pending = entries.filter(e => e.r1 == null && !e.r1NoTime).map(e => row(e, null, null, 'to run'));
+      const sections = [{ label: null, rows: placed }];
+      if (noTime.length) sections.push({ label: 'No time', rows: noTime });
+      if (pending.length) sections.push({ label: 'Still to run', rows: pending });
+      return { sections };
+    }
+
+    if (format === 'two_round') {
+      const rows = entries
+        .map(e => ({ e, ...entryTotal(e, cls) }))
+        .sort((a, b) => a.total - b.total)
+        .map((r, i) => row(r.e, i + 1, r.total, r.hasNoTime ? 'NT' : null));
+      return { sections: [{ label: null, rows }] };
+    }
+
+    // two_round_progressive
+    const qualifiers = shortGoQualifiers(cls);
+    const advanced = entries.filter(e => e.r1 != null && !e.r1NoTime);
+    const notAdvanced = entries.filter(e => e.r1NoTime);
+    const pendingR1 = entries.filter(e => e.r1 == null && !e.r1NoTime);
+
+    const finalists = qualifiers ? advanced.filter(e => qualifiers.has(e.id)) : [];
+    const rest = qualifiers ? advanced.filter(e => !qualifiers.has(e.id)) : advanced;
+
+    // A finalist who hasn't finished their short go yet has a total that
+    // only reflects R1+R2 — ranking that against a finalist who HAS run
+    // (R1+R2+SG) would unfairly favor whoever simply hasn't gone yet. Mobile
+    // app avoids this by only ranking completed short-go runs; incomplete
+    // ones get no rank number (shown via badge instead, not a rank).
+    const finalistRows = finalists.map(e => ({ e, ...entryTotal(e, cls) }));
+    const finalistsDone = finalistRows
+      .filter(r => r.e.shortGo != null || r.e.shortGoNoTime)
+      .sort((a, b) => a.total - b.total);
+    const finalistsToRun = finalistRows
+      .filter(r => r.e.shortGo == null && !r.e.shortGoNoTime)
+      .sort((a, b) => a.total - b.total); // pre-SG order (by R1+R2), for a sensible display order
+    const restRows = rest
+      .map(e => ({ e, ...entryTotal(e, cls) }))
+      .sort((a, b) => a.total - b.total);
+
+    let rank = 0;
+    const finalSection = [
+      ...finalistsDone.map(r => {
+        rank++;
+        return row(r.e, rank, r.total, r.e.shortGoNoTime ? 'NT' : (r.r2Pending ? 'R2 to run' : null));
+      }),
+      ...finalistsToRun.map(r => row(r.e, null, r.total, r.r2Pending ? 'R2 to run' : 'to run'))
+    ];
+    const restSection = restRows.map(r => {
+      rank++;
+      return row(r.e, rank, r.total, r.hasNoTime ? 'NT' : (r.r2Pending ? 'R2 to run' : null));
+    });
+
+    const sections = [];
+    if (finalSection.length) sections.push({ label: 'Short-go finalists', rows: finalSection });
+    sections.push({ label: qualifiers ? 'Everyone else' : null, rows: restSection });
+    if (notAdvanced.length) {
+      sections.push({ label: 'Did not advance', rows: notAdvanced.map(e => row(e, null, null, 'NT round 1')) });
+    }
+    if (pendingR1.length) {
+      sections.push({ label: 'Still to run', rows: pendingR1.map(e => row(e, null, null, 'to run')) });
+    }
+    return { sections };
+  }
+
+  // Round-robin ("Texas") standings by individual rider — team roping only.
+  // RodeoLife's draw already pairs every header with every heeler once (see
+  // draw.js), so round-robin isn't a different data shape, just a different
+  // lens on the same teams: aggregate every round a rider was part of
+  // (across every pairing they're in), rank by catches, then by time on the
+  // catches they made — exact port of the mobile app's Texas algorithm.
+  function riderStandings(cls) {
+    const teams = cls.teams || [];
+    const rounds = cls.format === 'one_round' ? ['r1']
+      : cls.format === 'two_round' ? ['r1', 'r2']
+      : ['r1', 'r2', 'shortGo'];
+    const byName = new Map();
+    function credit(name, clean, time) {
+      const key = (name || '').trim();
+      if (!key) return;
+      if (!byName.has(key)) byName.set(key, { name: key, catches: 0, totalTime: 0, runs: 0 });
+      const agg = byName.get(key);
+      agg.runs += 1;
+      if (clean) { agg.catches += 1; agg.totalTime += time; }
+    }
+    teams.forEach(t => {
+      rounds.forEach(r => {
+        const ran = t[r] != null || t[r + 'NoTime'];
+        if (!ran) return;
+        const clean = t[r] != null && !t[r + 'NoTime'];
+        credit(t.header, clean, clean ? t[r] : 0);
+        credit(t.heeler, clean, clean ? t[r] : 0);
+      });
+    });
+    return [...byName.values()]
+      .sort((a, b) => b.catches - a.catches || a.totalTime - b.totalTime)
+      .map((r, i) => ({ ...r, rank: r.catches > 0 ? i + 1 : null }));
   }
 
   const ready = init();
@@ -503,6 +720,9 @@ const Store = (() => {
     updateContestant,
     removeContestant,
     setEntryTime,
-    entryTotal
+    entryTotal,
+    shortGoQualifiers,
+    classStandings,
+    riderStandings
   };
 })();
