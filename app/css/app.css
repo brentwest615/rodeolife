@@ -85,7 +85,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
   padding: 18px 0 16px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 24px;
@@ -138,6 +139,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 main { padding: 0; }
@@ -1081,8 +1083,26 @@ select.input { cursor: pointer; }
    3 keeps each label on one line, which matters more on a phone screen. */
 .discipline-chooser { grid-template-columns: repeat(2, 1fr); }
 
-/* Format labels ("Two round progressive") are longer still — stack them. */
+/* Format labels ("Two round progressive") are longer still — stack them,
+   and let each option itself stack a label + one-line description so a
+   producer doesn't have to guess what a format actually does. */
 .format-chooser { grid-template-columns: 1fr; }
+.format-chooser .role-option {
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+  gap: 2px;
+}
+.format-option-main { font-weight: 600; }
+.format-option-desc {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: normal;
+  line-height: 1.35;
+}
+.format-chooser .role-option.selected .format-option-desc { color: var(--text-2); }
 
 /* ─── Toast ──────────────────────────────────────────────────────────── */
 
@@ -1116,3 +1136,27 @@ select.input { cursor: pointer; }
 .toast-success { background: var(--success); }
 .toast-warn { background: var(--warning); }
 .toast-error { background: var(--danger); }
+
+/* ─── Help ───────────────────────────────────────────────────────────── */
+
+.help-page {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.help-section h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.help-body { color: var(--text-2); font-size: 0.92rem; line-height: 1.6; }
+.help-body p { margin-bottom: 10px; }
+.help-body p:last-child { margin-bottom: 0; }
+.help-body ul { margin: 0 0 10px 20px; }
+.help-body li { margin-bottom: 6px; }
+.help-body strong { color: var(--text); }

@@ -38,6 +38,7 @@ function icon(name) {
     archive: '<path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
     eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+    help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/>',
     camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'
   };
   const svg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ''}</svg>`;
@@ -161,6 +162,7 @@ function parseRoute() {
     if (parts[2]) return { name: 'standingsClass', rodeoId: parts[1], classId: parts[2] };
     return { name: 'standingsRodeo', rodeoId: parts[1] };
   }
+  if (parts[0] === 'help') return { name: 'help' };
   return { name: 'rodeos' };
 }
 
@@ -198,6 +200,7 @@ function view_rodeos() {
       ])
     ]),
     el('div', { class: 'header-actions' }, [
+      el('a', { class: 'btn btn-ghost', href: '#/help' }, [icon('help'), 'Help']),
       el('button', { class: 'btn btn-primary', onclick: openCreateRodeoModal }, [
         icon('plus'), 'New Rodeo'
       ])
@@ -430,6 +433,91 @@ function tabLink(label, href, active, count) {
   ]);
 }
 
+// ─── Help ───────────────────────────────────────────────────────────────────
+
+function helpSection(title, bodyHtml) {
+  const section = el('div', { class: 'help-section' });
+  section.appendChild(el('h2', {}, title));
+  const body = el('div', { class: 'help-body' });
+  body.innerHTML = bodyHtml;
+  section.appendChild(body);
+  return section;
+}
+
+function view_help() {
+  const header = el('header', { class: 'app-header' }, [
+    el('div', { class: 'brand-row' }, [
+      el('a', { class: 'icon-btn', href: '#/', 'aria-label': 'Back' }, [icon('back')]),
+      el('div', { class: 'event-title' }, [el('h1', {}, 'Help')])
+    ])
+  ]);
+
+  const main = el('div', { class: 'page help-page' }, [
+    helpSection('Rodeos & Classes', `
+      <p>A <strong>Rodeo</strong> is one event (a weekend jackpot, a single-day roping). Inside
+      it, add one <strong>Class</strong> per discipline you're running — Barrel Racing, Team
+      Roping, Pole Bending, and so on. Each class has its own sign-ups, times, and standings.</p>
+    `),
+    helpSection('Adding riders and contestants', `
+      <p>Type names in one at a time with <strong>Add Rider</strong>/<strong>Add Contestant</strong>
+      — as you type, anyone who's entered a rodeo on this app before shows up as a suggestion,
+      and their back number fills in automatically.</p>
+      <p>Or tap <strong>Import from photo</strong> to snap a picture of a paper sign-up sheet —
+      it reads the names (and back numbers, for riders) and shows you what it found before
+      anything is actually added, so you can fix anything it misread or uncheck rows you don't
+      want.</p>
+    `),
+    helpSection('Team roping draws', `
+      <p><strong>Generate Draw</strong> pairs every header with every heeler exactly once —
+      it's a full round-robin, not a single fixed partner list — and orders the runs to avoid
+      the same rider going back-to-back.</p>
+    `),
+    helpSection('Scoring formats', `
+      <p>Pick a class's format when you create it (and change it any time from
+      <strong>Edit</strong>):</p>
+      <ul>
+        <li><strong>${formatLabel('one_round')}</strong> — ${formatDescription('one_round')}</li>
+        <li><strong>${formatLabel('two_round')}</strong> — ${formatDescription('two_round')}</li>
+        <li><strong>${formatLabel('two_round_progressive')}</strong> — ${formatDescription('two_round_progressive')}</li>
+      </ul>
+      <p>For a progressive class, set the short-go cutoff (top N) from <strong>Edit</strong>
+      once you know how many should advance — you don't have to decide that at creation time.</p>
+    `),
+    helpSection('Entering times', `
+      <p>The <strong>Wizard</strong> view shows one entry at a time, in order, with a big input
+      — enter a time and it automatically moves to the next one. It's built for scoring live,
+      one run at a time. The <strong>Spreadsheet</strong> view shows everyone at once, useful
+      for fixing an entry out of order or reviewing the whole field.</p>
+      <p>Tapping <strong>No time</strong> opens a reason picker specific to the discipline
+      (knocked barrel, broken pattern, etc.) plus an optional note — both optional, so a plain
+      no-time is still one tap away.</p>
+      <p>If a discipline has penalties (a barrier, a dropped leg, ...), penalty buttons show up
+      next to the time entry — tap as many as apply, they stack, and the seconds are added on
+      top of the raw time automatically everywhere it's used.</p>
+    `),
+    helpSection('Standings', `
+      <p>Tap <strong>View standings</strong> to see the current leaderboard, or
+      <strong>Share standings</strong> to copy a link you can text to parents — that link is
+      read-only (nothing to accidentally change) and updates live as you enter times.</p>
+      <p>For a progressive class with a short-go cutoff, standings are split into
+      <strong>Short-go finalists</strong>, <strong>Everyone else</strong>, and
+      <strong>Did not advance</strong> — a finalist who hasn't run their short go yet shows a
+      "to run" tag instead of a rank, so they're never compared unfairly against someone who
+      already finished.</p>
+      <p>Team roping classes get a <strong>By pairing / By rider</strong> toggle on the
+      standings page — "by rider" aggregates every run a person was part of across all their
+      partners, ranked by catches then time, for a round-robin-style leaderboard.</p>
+    `),
+    helpSection('Exporting results', `
+      <p><strong>Export CSV</strong> on a class screen downloads the results as a spreadsheet
+      file, matching what's on screen. Team roping classes also get
+      <strong>Export by rider</strong> for the round-robin aggregate.</p>
+    `)
+  ]);
+
+  return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
+}
+
 // ─── Read-only standings (parent-facing, shareable links) ──────────────────
 // No inputs, no edit affordances — safe to hand out even though there's no
 // login, since there's nothing on this page to accidentally change. Lives in
@@ -447,6 +535,7 @@ function view_standings_rodeo(rodeoId) {
 
   const header = el('header', { class: 'app-header' }, [
     el('div', { class: 'brand-row' }, [
+      el('a', { class: 'icon-btn', href: '#/', 'aria-label': 'Back' }, [icon('back')]),
       el('div', { class: 'event-title' }, [
         el('h1', {}, rodeo.name),
         el('div', { class: 'event-sub' }, [
@@ -1728,7 +1817,11 @@ function openCreateClassModal(rodeo) {
     <div class="field">
       <span class="field-label">Format</span>
       <div class="role-chooser format-chooser" id="format-chooser">
-        ${CLASS_FORMATS.map(f => `<label class="role-option" data-value="${f}"><input type="radio" name="format" value="${f}"> ${formatLabel(f)}</label>`).join('')}
+        ${CLASS_FORMATS.map(f => `<label class="role-option" data-value="${f}">
+          <input type="radio" name="format" value="${f}">
+          <span class="format-option-main">${formatLabel(f)}</span>
+          <span class="format-option-desc">${formatDescription(f)}</span>
+        </label>`).join('')}
       </div>
       <span class="muted small">You can set the short-go cutoff later, once entries start running.</span>
     </div>
@@ -1792,7 +1885,11 @@ function openEditClassModal(rodeo, cls) {
     <div class="field">
       <span class="field-label">Format</span>
       <div class="role-chooser format-chooser" id="format-chooser">
-        ${CLASS_FORMATS.map(f => `<label class="role-option" data-value="${f}"><input type="radio" name="format" value="${f}"> ${formatLabel(f)}</label>`).join('')}
+        ${CLASS_FORMATS.map(f => `<label class="role-option" data-value="${f}">
+          <input type="radio" name="format" value="${f}">
+          <span class="format-option-main">${formatLabel(f)}</span>
+          <span class="format-option-desc">${formatDescription(f)}</span>
+        </label>`).join('')}
       </div>
     </div>
     <label class="field" id="shortgo-field" hidden>
@@ -1855,6 +1952,7 @@ function render() {
   else if (route.name === 'rodeo') view = view_rodeo(route.rodeoId);
   else if (route.name === 'standingsClass') view = view_standings_class(route.rodeoId, route.classId);
   else if (route.name === 'standingsRodeo') view = view_standings_rodeo(route.rodeoId);
+  else if (route.name === 'help') view = view_help();
   else view = view_rodeos();
   root.innerHTML = '';
   root.appendChild(view);

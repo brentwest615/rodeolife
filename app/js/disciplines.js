@@ -71,8 +71,20 @@ const FORMAT_LABELS = {
   two_round_progressive: 'Two round progressive'
 };
 
+// Shown under each format option when a producer is choosing — a plain
+// label alone ("Two round progressive") doesn't say what actually happens.
+const FORMAT_DESCRIPTIONS = {
+  one_round: 'Everyone runs once. Fastest clean time wins.',
+  two_round: 'Everyone runs twice. Total combined time wins — a missed run counts against you, it doesn’t just get skipped.',
+  two_round_progressive: 'Only a clean Round 1 unlocks Round 2. Optionally cut to a top-N short go afterward.'
+};
+
 function formatLabel(code) {
   return FORMAT_LABELS[code] || code;
+}
+
+function formatDescription(code) {
+  return FORMAT_DESCRIPTIONS[code] || '';
 }
 
 // Stackable time penalties per discipline — exact port of the mobile app's
