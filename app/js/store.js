@@ -3,13 +3,18 @@
 /**
  * Data layer for RodeoLife.
  *
- * Schema (v2) — a Rodeo (one event day) holds multiple Classes (one per
- * discipline run that day: Team Roping, Barrel Racing, Goat Tying, etc.):
- *   {
- *     version: 2,
- *     rodeos: { [id]: Rodeo },
- *     rodeoOrder: string[]   // most-recent first
- *   }
+ * Backend: Supabase Postgres, one `rodeos` table, one JSONB blob per row
+ * (`data` column = the exact Rodeo object shape below). No login — anyone
+ * with this app's URL shares one dataset (see supabase-client.js and the
+ * SQL in the project's setup notes). Realtime keeps every open tab/device in
+ * sync automatically.
+ *
+ * In-memory cache: every getter below (`listRodeos`, `getRodeo`, `getClass`)
+ * reads a plain synchronous in-memory `data.rodeos` map — app.js's calling
+ * code never changed when this moved off localStorage. Mutators update that
+ * cache immediately (instant UI) and fire an async Supabase write in the
+ * background; the Realtime subscription merges in changes made by OTHER
+ * tabs/devices and re-renders.
  *
  * Rodeo:
  *   {
@@ -34,34 +39,25 @@
  *                    r1, r1NoTime, r2, r2NoTime, shortGo, shortGoNoTime }[]
  *   }
  *
- * v1 (pre-Class) shape, migrated automatically on load:
- *   { version: 1, events: { [id]: Event }, eventOrder: string[] }
- *   Event had riders/teams directly on it (always team-roping). Each becomes
- *   a Rodeo with exactly one Class: { discipline: 'team_roping', ... }.
+ * Legacy local shapes, migrated ONCE (only if Supabase has zero rows — i.e.
+ * this is the first device to ever connect this app to a fresh backend —
+ * so a real weekend's data already on this device isn't stranded):
+ *   v1 (pre-Class): { version: 1, events: { [id]: Event }, eventOrder }
+ *     Event had riders/teams directly on it (always team-roping). Each
+ *     becomes a Rodeo with exactly one Class: { discipline: 'team_roping' }.
+ *   v2 (pre-Supabase, local only): { version: 2, rodeos: { [id]: Rodeo }, rodeoOrder }
+ *     Same Rodeo/Class shape as today — just needs uploading.
  */
 
-const STORAGE_KEY = 'rodeolife_v1';
+const LEGACY_STORAGE_KEY = 'rodeolife_v1';
 
 const Store = (() => {
-  let data = { version: 2, rodeos: {}, rodeoOrder: [] };
+  const data = { rodeos: {} };
   const listeners = new Set();
 
   function uuid() {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return 'id-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  }
-
-  function load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && (parsed.events || parsed.rodeos)) data = parsed;
-      }
-    } catch (_) {
-      // corrupted; reset
-    }
-    migrate();
   }
 
   function emptyTimeFields() {
@@ -72,16 +68,56 @@ const Store = (() => {
     };
   }
 
-  function migrate() {
-    let dirty = false;
+  // ─── Init / sync with Supabase ──────────────────────────────────────────
 
-    // v1 -> v2: wrap each old riders/teams Event into a Rodeo with one
-    // team_roping Class, preserving every id already assigned.
-    if (!data.version || data.version < 2) {
-      const rodeos = {};
-      const rodeoOrder = data.eventOrder || [];
-      for (const id of Object.keys(data.events || {})) {
-        const evt = data.events[id];
+  async function init() {
+    let rows = [];
+    try {
+      const { data: rows_, error } = await db.from('rodeos').select('*');
+      if (error) throw error;
+      rows = rows_ || [];
+    } catch (e) {
+      console.error('RodeoLife: could not reach the shared backend', e);
+    }
+
+    if (rows.length === 0) {
+      // Nobody has ever put data in this backend yet — if THIS device has
+      // pre-Supabase local data, upload it now so it isn't stranded.
+      const legacy = migrateLegacyLocalData();
+      for (const rodeo of Object.values(legacy)) {
+        data.rodeos[rodeo.id] = rodeo;
+        upsertRemote(rodeo);
+      }
+    } else {
+      for (const row of rows) data.rodeos[row.id] = row.data;
+    }
+
+    subscribeRealtime();
+    notify();
+  }
+
+  // Reads the OLD localStorage-only schema (v1 events, or v2 rodeos saved
+  // before the Supabase migration) and returns a { [id]: Rodeo } map. Pure —
+  // does not touch `data` or localStorage itself; the caller decides whether
+  // to actually adopt/upload it (only when the shared backend is empty).
+  function migrateLegacyLocalData() {
+    let legacy;
+    try {
+      const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (!raw) return {};
+      legacy = JSON.parse(raw);
+    } catch (_) {
+      return {};
+    }
+    if (!legacy) return {};
+
+    let rodeos = legacy.rodeos;
+    if (!rodeos && legacy.events) {
+      // v1 -> v2: wrap each old riders/teams Event into a Rodeo with one
+      // team_roping Class, preserving every id already assigned.
+      rodeos = {};
+      for (const id of Object.keys(legacy.events)) {
+        const evt = legacy.events[id];
         rodeos[id] = {
           id: evt.id,
           name: evt.name,
@@ -100,14 +136,11 @@ const Store = (() => {
           }]
         };
       }
-      data = { version: 2, rodeos, rodeoOrder };
-      dirty = true;
     }
+    if (!rodeos) return {};
 
-    // Legacy pre-riders Event shape (headers/heelers arrays) — only ever seen
-    // inside a v1 Event, so migrate it on the now-wrapped team_roping class.
-    for (const id of Object.keys(data.rodeos)) {
-      const rodeo = data.rodeos[id];
+    // Backfill anything from before live time entry / the Rodeo-Class split.
+    for (const rodeo of Object.values(rodeos)) {
       for (const cls of rodeo.classes || []) {
         if (isTeamDiscipline(cls.discipline) && !cls.riders) {
           const headerSet = new Set((cls.headers || []).map(n => n.trim()).filter(Boolean));
@@ -119,28 +152,54 @@ const Store = (() => {
           }));
           delete cls.headers;
           delete cls.heelers;
-          dirty = true;
         }
-        if (!cls.contestants) { cls.contestants = []; dirty = true; }
-        // Backfill id + time fields onto teams/contestants from before live
-        // time entry (or before the Rodeo/Class split) existed.
+        if (!cls.contestants) cls.contestants = [];
         for (const t of (cls.teams || []).concat(cls.contestants || [])) {
-          if (t.id === undefined) { t.id = uuid(); dirty = true; }
+          if (t.id === undefined) t.id = uuid();
           for (const key of ['r1', 'r2', 'shortGo']) {
-            if (t[key] === undefined) { t[key] = null; dirty = true; }
-            if (t[key + 'NoTime'] === undefined) { t[key + 'NoTime'] = false; dirty = true; }
+            if (t[key] === undefined) t[key] = null;
+            if (t[key + 'NoTime'] === undefined) t[key + 'NoTime'] = false;
           }
         }
       }
     }
-
-    if (dirty) persist();
+    return rodeos;
   }
 
-  function persist() {
+  async function upsertRemote(rodeo) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (_) {}
+      const { error } = await db.from('rodeos').upsert({
+        id: rodeo.id,
+        data: rodeo,
+        updated_at: new Date().toISOString()
+      });
+      if (error) throw error;
+    } catch (e) {
+      console.error('RodeoLife: failed to sync a change to the shared backend', e);
+    }
+  }
+
+  async function deleteRemote(id) {
+    try {
+      const { error } = await db.from('rodeos').delete().eq('id', id);
+      if (error) throw error;
+    } catch (e) {
+      console.error('RodeoLife: failed to delete on the shared backend', e);
+    }
+  }
+
+  function subscribeRealtime() {
+    db
+      .channel('rodeos-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rodeos' }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          delete data.rodeos[payload.old.id];
+        } else {
+          data.rodeos[payload.new.id] = payload.new.data;
+        }
+        notify();
+      })
+      .subscribe();
   }
 
   function notify() {
@@ -152,10 +211,22 @@ const Store = (() => {
     return () => listeners.delete(fn);
   }
 
+  // Bumps `modified`, pushes the updated rodeo to the shared backend
+  // (fire-and-forget — the in-memory cache and UI update immediately either
+  // way), and re-renders. Every mutator below funnels through this.
+  function touch(rodeoId) {
+    const rodeo = data.rodeos[rodeoId];
+    if (rodeo) {
+      rodeo.modified = Date.now();
+      upsertRemote(rodeo);
+    }
+    notify();
+  }
+
   // ─── Rodeos ─────────────────────────────────────────────────────────────
 
   function listRodeos() {
-    return data.rodeoOrder.map(id => data.rodeos[id]).filter(Boolean);
+    return Object.values(data.rodeos).sort((a, b) => (b.created || 0) - (a.created || 0));
   }
 
   function getRodeo(id) {
@@ -175,18 +246,15 @@ const Store = (() => {
       modified: now,
       classes: []
     };
-    data.rodeoOrder.unshift(id);
-    persist();
-    notify();
+    touch(id);
     return id;
   }
 
   function updateRodeo(id, patch) {
     const rodeo = data.rodeos[id];
     if (!rodeo) return;
-    Object.assign(rodeo, patch, { modified: Date.now() });
-    persist();
-    notify();
+    Object.assign(rodeo, patch);
+    touch(id);
   }
 
   function setStatus(id, status) {
@@ -195,8 +263,7 @@ const Store = (() => {
 
   function deleteRodeo(id) {
     delete data.rodeos[id];
-    data.rodeoOrder = data.rodeoOrder.filter(x => x !== id);
-    persist();
+    deleteRemote(id);
     notify();
   }
 
@@ -206,7 +273,7 @@ const Store = (() => {
     const newId = createRodeo({ name: src.name + ' (copy)', date: src.date, location: src.location });
     const copy = data.rodeos[newId];
     // Copy each class's sign-up list with fresh ids; times/draw are wiped —
-    // same "fresh draw on duplicate" behavior as before the Rodeo/Class split.
+    // same "fresh draw on duplicate" behavior as before.
     copy.classes = (src.classes || []).map(cls => ({
       id: uuid(),
       name: cls.name,
@@ -215,8 +282,7 @@ const Store = (() => {
       teams: [],
       contestants: (cls.contestants || []).map(c => ({ ...c, id: uuid(), ...emptyTimeFields() }))
     }));
-    persist();
-    notify();
+    touch(newId);
     return newId;
   }
 
@@ -240,9 +306,7 @@ const Store = (() => {
       teams: [],
       contestants: []
     });
-    rodeo.modified = Date.now();
-    persist();
-    notify();
+    touch(rodeoId);
     return id;
   }
 
@@ -260,9 +324,7 @@ const Store = (() => {
     const rodeo = data.rodeos[rodeoId];
     if (!rodeo) return;
     rodeo.classes = rodeo.classes.filter(c => c.id !== classId);
-    rodeo.modified = Date.now();
-    persist();
-    notify();
+    touch(rodeoId);
   }
 
   // ─── Riders (team_roping classes only) ─────────────────────────────────
@@ -385,16 +447,10 @@ const Store = (() => {
     return { total: anyReal ? sum : null, hasNoTime: anyNoTime };
   }
 
-  function touch(rodeoId) {
-    const rodeo = data.rodeos[rodeoId];
-    if (rodeo) rodeo.modified = Date.now();
-    persist();
-    notify();
-  }
-
-  load();
+  const ready = init();
 
   return {
+    ready,
     subscribe,
     listRodeos,
     getRodeo,

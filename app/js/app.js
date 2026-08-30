@@ -1186,6 +1186,21 @@ function render() {
   root.appendChild(view);
 }
 
+function renderLoading() {
+  const root = document.getElementById('app');
+  root.innerHTML = '';
+  root.appendChild(el('div', { class: 'shell' }, [
+    el('div', { class: 'empty-state' }, [
+      el('div', { class: 'empty-illustration' }, '🤠'),
+      el('p', { class: 'muted' }, 'Connecting…')
+    ])
+  ]));
+}
+
 window.addEventListener('hashchange', render);
 Store.subscribe(render);
-render();
+// Store.ready resolves once the first fetch from the shared backend
+// completes (see store.js Store.init()) — before that there's nothing to
+// render yet, so show a brief connecting state instead of an empty list.
+renderLoading();
+Store.ready.then(render);
