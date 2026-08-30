@@ -138,56 +138,62 @@ function confirm(msg, { confirmLabel = 'Confirm', danger = false } = {}) {
 }
 
 // ─── Routing ────────────────────────────────────────────────────────────────
+// #/                                          -> rodeo list
+// #/rodeo/:rodeoId                            -> class list for that rodeo
+// #/rodeo/:rodeoId/class/:classId/:tab        -> class detail
 
 function parseRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
-  if (!hash) return { name: 'events' };
+  if (!hash) return { name: 'rodeos' };
   const parts = hash.split('/');
-  if (parts[0] === 'event' && parts[1]) {
-    return { name: 'event', id: parts[1], tab: parts[2] || 'signups' };
+  if (parts[0] === 'rodeo' && parts[1]) {
+    if (parts[2] === 'class' && parts[3]) {
+      return { name: 'class', rodeoId: parts[1], classId: parts[3], tab: parts[4] || 'signups' };
+    }
+    return { name: 'rodeo', rodeoId: parts[1] };
   }
-  return { name: 'events' };
+  return { name: 'rodeos' };
 }
 
 function navigate(path) {
   location.hash = path;
 }
 
-// ─── Views ──────────────────────────────────────────────────────────────────
+// ─── Rodeo list view ────────────────────────────────────────────────────────
 
-function view_events() {
-  const events = Store.listEvents();
+function view_rodeos() {
+  const rodeos = Store.listRodeos();
 
   const header = el('header', { class: 'app-header' }, [
     el('div', { class: 'brand' }, [
       el('div', { class: 'brand-mark' }, 'R'),
       el('div', { class: 'brand-text' }, [
         el('div', { class: 'brand-name' }, 'RodeoLife'),
-        el('div', { class: 'brand-tag' }, 'Team Roping Manager')
+        el('div', { class: 'brand-tag' }, 'Rodeo Manager')
       ])
     ]),
     el('div', { class: 'header-actions' }, [
-      el('button', { class: 'btn btn-primary', onclick: openCreateEventModal }, [
-        icon('plus'), 'New Event'
+      el('button', { class: 'btn btn-primary', onclick: openCreateRodeoModal }, [
+        icon('plus'), 'New Rodeo'
       ])
     ])
   ]);
 
   let main;
-  if (events.length === 0) {
+  if (rodeos.length === 0) {
     main = el('div', { class: 'empty-state' }, [
       el('div', { class: 'empty-illustration' }, '🤠'),
-      el('h2', {}, 'No events yet'),
-      el('p', { class: 'muted' }, 'Create your first event to start managing sign-ups, draws, and time slips.'),
-      el('button', { class: 'btn btn-primary btn-lg', onclick: openCreateEventModal }, [icon('plus'), 'Create Event'])
+      el('h2', {}, 'No rodeos yet'),
+      el('p', { class: 'muted' }, 'Create your first rodeo, then add classes for each event (team roping, barrels, poles, etc).'),
+      el('button', { class: 'btn btn-primary btn-lg', onclick: openCreateRodeoModal }, [icon('plus'), 'Create Rodeo'])
     ]);
   } else {
     const grid = el('div', { class: 'event-grid' });
-    for (const evt of events) grid.appendChild(eventCard(evt));
+    for (const rodeo of rodeos) grid.appendChild(rodeoCard(rodeo));
     main = el('div', { class: 'page' }, [
       el('div', { class: 'page-header' }, [
-        el('h1', {}, 'Events'),
-        el('p', { class: 'muted' }, `${events.length} event${events.length === 1 ? '' : 's'}`)
+        el('h1', {}, 'Rodeos'),
+        el('p', { class: 'muted' }, `${rodeos.length} rodeo${rodeos.length === 1 ? '' : 's'}`)
       ]),
       grid
     ]);
@@ -196,32 +202,28 @@ function view_events() {
   return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
 }
 
-function eventCard(evt) {
-  const teamCount = evt.teams.length;
-  const headerCount = evt.riders.filter(r => r.isHeader).length;
-  const heelerCount = evt.riders.filter(r => r.isHeeler).length;
+function rodeoCard(rodeo) {
+  const classes = rodeo.classes || [];
   const sub = [
-    fmtDate(evt.date) || 'No date',
-    evt.location
+    fmtDate(rodeo.date) || 'No date',
+    rodeo.location
   ].filter(Boolean).join(' · ');
 
-  const meta = [
-    `${headerCount} headers`,
-    `${heelerCount} heelers`,
-    teamCount ? `${teamCount} teams` : null
-  ].filter(Boolean).join(' · ');
+  const meta = classes.length
+    ? classes.map(c => c.name).join(' · ')
+    : 'No classes yet';
 
   return el('a', {
     class: 'event-card',
-    href: '#/event/' + evt.id
+    href: '#/rodeo/' + rodeo.id
   }, [
     el('div', { class: 'event-card-top' }, [
-      el('h3', {}, evt.name),
-      statusBadge(evt.status)
+      el('h3', {}, rodeo.name),
+      statusBadge(rodeo.status)
     ]),
     el('div', { class: 'event-card-sub muted' }, sub),
     el('div', { class: 'event-card-meta' }, meta),
-    el('div', { class: 'event-card-foot muted' }, 'Edited ' + relTime(evt.modified))
+    el('div', { class: 'event-card-foot muted' }, 'Edited ' + relTime(rodeo.modified))
   ]);
 }
 
@@ -230,15 +232,15 @@ function statusBadge(status) {
   return el('span', { class: 'badge badge-' + status }, labels[status] || status);
 }
 
-// ─── Event detail view ──────────────────────────────────────────────────────
+// ─── Rodeo detail view (list of Classes) ───────────────────────────────────
 
-function view_event(id, tab) {
-  const evt = Store.getEvent(id);
-  if (!evt) {
+function view_rodeo(rodeoId) {
+  const rodeo = Store.getRodeo(rodeoId);
+  if (!rodeo) {
     return el('div', { class: 'shell' }, [
       el('div', { class: 'empty-state' }, [
-        el('h2', {}, 'Event not found'),
-        el('button', { class: 'btn btn-secondary', onclick: () => navigate('/') }, 'Back to Events')
+        el('h2', {}, 'Rodeo not found'),
+        el('button', { class: 'btn btn-secondary', onclick: () => navigate('/') }, 'Back to Rodeos')
       ])
     ]);
   }
@@ -247,30 +249,127 @@ function view_event(id, tab) {
     el('div', { class: 'brand-row' }, [
       el('a', { class: 'icon-btn', href: '#/', 'aria-label': 'Back' }, [icon('back')]),
       el('div', { class: 'event-title' }, [
-        el('h1', {}, evt.name),
+        el('h1', {}, rodeo.name),
         el('div', { class: 'event-sub' }, [
-          fmtDate(evt.date) || 'No date',
-          evt.location ? ' · ' + evt.location : '',
+          fmtDate(rodeo.date) || 'No date',
+          rodeo.location ? ' · ' + rodeo.location : '',
           ' · ',
-          statusBadge(evt.status)
+          statusBadge(rodeo.status)
         ])
       ])
     ]),
-    el('div', { class: 'header-actions' }, eventActions(evt))
+    el('div', { class: 'header-actions' }, rodeoActions(rodeo))
   ]);
 
-  const tabs = el('nav', { class: 'tabs' }, [
-    tabLink('Sign-ups', `#/event/${id}/signups`, tab === 'signups', `${evt.riders.length}`),
-    tabLink('Draw', `#/event/${id}/draw`, tab === 'draw', evt.teams.length || ''),
-    tabLink('Times', `#/event/${id}/times`, tab === 'times'),
-    tabLink('Slips', `#/event/${id}/slips`, tab === 'slips')
+  const classes = rodeo.classes || [];
+  const list = el('div', { class: 'event-grid' });
+  classes.forEach(cls => list.appendChild(classCard(rodeo, cls)));
+
+  const main = el('div', { class: 'page' }, [
+    classes.length === 0
+      ? el('div', { class: 'empty-state' }, [
+          el('div', { class: 'empty-illustration' }, '🎟️'),
+          el('h2', {}, 'No classes yet'),
+          el('p', { class: 'muted' }, 'Add a class for each event this rodeo runs — Team Roping, Barrel Racing, Goat Tying, etc.')
+        ])
+      : list,
+    el('div', { class: 'sticky-actions' }, [
+      el('button', {
+        class: 'btn btn-primary btn-lg',
+        onclick: () => openCreateClassModal(rodeo)
+      }, [icon('plus'), 'Add Class'])
+    ])
   ]);
+
+  return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
+}
+
+function classCard(rodeo, cls) {
+  const team = isTeamDiscipline(cls.discipline);
+  const entries = team ? (cls.teams || []) : (cls.contestants || []);
+  const signups = team ? (cls.riders || []).length : (cls.contestants || []).length;
+  const meta = team
+    ? `${signups} riders · ${entries.length} teams`
+    : `${signups} contestants`;
+
+  return el('a', {
+    class: 'event-card',
+    href: `#/rodeo/${rodeo.id}/class/${cls.id}/signups`
+  }, [
+    el('div', { class: 'event-card-top' }, [
+      el('h3', {}, cls.name),
+      el('span', { class: 'badge' }, disciplineLabel(cls.discipline))
+    ]),
+    el('div', { class: 'event-card-meta' }, meta)
+  ]);
+}
+
+function rodeoActions(rodeo) {
+  const actions = [];
+  actions.push(el('button', { class: 'btn btn-ghost', onclick: () => openEditRodeoModal(rodeo) }, [icon('edit'), 'Edit']));
+  if (rodeo.status !== 'closed') {
+    actions.push(el('button', { class: 'btn btn-ghost', onclick: () => { Store.setStatus(rodeo.id, 'closed'); toast('Rodeo closed'); } }, [icon('archive'), 'Close']));
+  } else {
+    actions.push(el('button', { class: 'btn btn-ghost', onclick: () => { Store.setStatus(rodeo.id, 'running'); toast('Rodeo reopened'); } }, [icon('play'), 'Reopen']));
+  }
+  return actions;
+}
+
+// ─── Class detail view ──────────────────────────────────────────────────────
+
+function view_class(rodeoId, classId, tab) {
+  const rodeo = Store.getRodeo(rodeoId);
+  const cls = rodeo && Store.getClass(rodeoId, classId);
+  if (!rodeo || !cls) {
+    return el('div', { class: 'shell' }, [
+      el('div', { class: 'empty-state' }, [
+        el('h2', {}, 'Class not found'),
+        el('button', { class: 'btn btn-secondary', onclick: () => navigate('/rodeo/' + rodeoId) }, 'Back to Rodeo')
+      ])
+    ]);
+  }
+
+  const team = isTeamDiscipline(cls.discipline);
+
+  const header = el('header', { class: 'app-header' }, [
+    el('div', { class: 'brand-row' }, [
+      el('a', { class: 'icon-btn', href: `#/rodeo/${rodeoId}`, 'aria-label': 'Back' }, [icon('back')]),
+      el('div', { class: 'event-title' }, [
+        el('h1', {}, cls.name),
+        el('div', { class: 'event-sub' }, [disciplineLabel(cls.discipline), ' · ', rodeo.name])
+      ])
+    ]),
+    el('div', { class: 'header-actions' }, [
+      el('button', { class: 'btn btn-ghost', onclick: () => openEditClassModal(rodeo, cls) }, [icon('edit'), 'Edit'])
+    ])
+  ]);
+
+  const tabDefs = team
+    ? [
+        ['signups', 'Sign-ups', cls.riders.length],
+        ['draw', 'Draw', cls.teams.length || ''],
+        ['times', 'Times', undefined],
+        ['slips', 'Slips', undefined]
+      ]
+    : [
+        ['signups', 'Sign-ups', cls.contestants.length],
+        ['times', 'Times', undefined]
+      ];
+
+  const tabs = el('nav', { class: 'tabs' },
+    tabDefs.map(([key, label, count]) =>
+      tabLink(label, `#/rodeo/${rodeoId}/class/${classId}/${key}`, tab === key, count)));
 
   let panel;
-  if (tab === 'draw') panel = panel_draw(evt);
-  else if (tab === 'times') panel = panel_times(evt);
-  else if (tab === 'slips') panel = panel_slips(evt);
-  else panel = panel_signups(evt);
+  if (team) {
+    if (tab === 'draw') panel = panel_draw(rodeo, cls);
+    else if (tab === 'times') panel = panel_times(rodeo, cls);
+    else if (tab === 'slips') panel = panel_slips(rodeo, cls);
+    else panel = panel_signups(rodeo, cls);
+  } else {
+    if (tab === 'times') panel = panel_times(rodeo, cls);
+    else panel = panel_signups_solo(rodeo, cls);
+  }
 
   return el('div', { class: 'shell' }, [header, tabs, el('main', {}, [panel])]);
 }
@@ -282,27 +381,15 @@ function tabLink(label, href, active, count) {
   ]);
 }
 
-function eventActions(evt) {
-  const actions = [];
-  actions.push(el('button', { class: 'btn btn-ghost', onclick: () => openEditEventModal(evt) }, [icon('edit'), 'Edit']));
-  if (evt.status !== 'closed') {
-    actions.push(el('button', { class: 'btn btn-ghost', onclick: () => Store.setStatus(evt.id, 'closed') && toast('Event closed') }, [icon('archive'), 'Close']));
-  } else {
-    actions.push(el('button', { class: 'btn btn-ghost', onclick: () => { Store.setStatus(evt.id, 'running'); toast('Event reopened'); } }, [icon('play'), 'Reopen']));
-  }
-  return actions;
-}
+// ─── Sign-ups panel (team_roping classes) ──────────────────────────────────
 
-// ─── Sign-ups panel ─────────────────────────────────────────────────────────
-
-function panel_signups(evt) {
-  const riders = evt.riders;
+function panel_signups(rodeo, cls) {
+  const riders = cls.riders;
   const headerCount = riders.filter(r => r.isHeader).length;
   const heelerCount = riders.filter(r => r.isHeeler).length;
   const dualCount = riders.filter(r => r.isHeader && r.isHeeler).length;
   const orphanCount = riders.filter(r => !r.isHeader && !r.isHeeler).length;
 
-  // Filter / search
   const searchInput = el('input', {
     class: 'input riders-search',
     placeholder: 'Search riders…',
@@ -320,13 +407,13 @@ function panel_signups(evt) {
     return el('li', {
       class: 'rider-row',
       dataset: { name: r.name.toLowerCase() },
-      onclick: () => openRiderModal(evt, r)
+      onclick: () => openRiderModal(rodeo, cls, r)
     }, [
       el('span', { class: 'rider-name' }, r.name),
       el('span', { class: 'rider-tags' }, tags),
       el('span', { class: 'icon-btn', onclick: e => {
         e.stopPropagation();
-        openRiderModal(evt, r);
+        openRiderModal(rodeo, cls, r);
       } }, [icon('edit')])
     ]);
   }
@@ -371,7 +458,7 @@ function panel_signups(evt) {
         searchInput,
         el('button', {
           class: 'btn btn-primary',
-          onclick: () => openRiderModal(evt, null)
+          onclick: () => openRiderModal(rodeo, cls, null)
         }, [icon('plus'), 'Add Rider'])
       ]),
       list
@@ -387,16 +474,16 @@ function panel_signups(evt) {
         disabled: !(headerCount && heelerCount),
         onclick: () => {
           if (!headerCount || !heelerCount) return;
-          Store.generateDraw(evt.id);
+          Store.generateDraw(rodeo.id, cls.id);
           toast('Draw generated', 'success');
-          navigate('/event/' + evt.id + '/draw');
+          navigate(`/rodeo/${rodeo.id}/class/${cls.id}/draw`);
         }
       }, [icon('play'), 'Generate Draw'])
     ])
   ]);
 }
 
-function openRiderModal(evt, rider) {
+function openRiderModal(rodeo, cls, rider) {
   const isEdit = !!rider;
   let role = rider ? (rider.isHeader && rider.isHeeler ? 'both' : rider.isHeader ? 'header' : rider.isHeeler ? 'heeler' : 'header') : 'header';
 
@@ -439,11 +526,11 @@ function openRiderModal(evt, rider) {
       isHeeler: role === 'heeler' || role === 'both'
     };
     if (isEdit) {
-      Store.updateRider(evt.id, rider.id, { name, ...flags });
+      Store.updateRider(rodeo.id, cls.id, rider.id, { name, ...flags });
       close();
       toast('Rider updated');
     } else {
-      const newId = Store.addRider(evt.id, { name, ...flags });
+      const newId = Store.addRider(rodeo.id, cls.id, { name, ...flags });
       if (newId === null) {
         toast('That name already exists', 'warn');
         return;
@@ -464,7 +551,7 @@ function openRiderModal(evt, rider) {
         { label: 'Remove', class: 'btn btn-danger-ghost', onClick: async c => {
           c();
           if (await confirm(`Remove ${rider.name}?`, { confirmLabel: 'Remove', danger: true })) {
-            Store.removeRider(evt.id, rider.id);
+            Store.removeRider(rodeo.id, cls.id, rider.id);
             toast('Rider removed');
           }
         } },
@@ -487,27 +574,169 @@ function openRiderModal(evt, rider) {
   setTimeout(() => nameInput.focus(), 50);
 }
 
-// ─── Draw panel ─────────────────────────────────────────────────────────────
+// ─── Sign-ups panel (every other discipline — flat contestant list) ───────
 
-function panel_draw(evt) {
-  if (evt.teams.length === 0) {
+function panel_signups_solo(rodeo, cls) {
+  const contestants = cls.contestants;
+
+  const searchInput = el('input', {
+    class: 'input riders-search',
+    placeholder: 'Search contestants…',
+    oninput: e => filterList(e.target.value)
+  });
+
+  const list = el('ul', { class: 'riders-list' });
+
+  function rowFor(c) {
+    return el('li', {
+      class: 'rider-row',
+      dataset: { name: c.name.toLowerCase() },
+      onclick: () => openContestantModal(rodeo, cls, c)
+    }, [
+      el('span', { class: 'rider-name' }, c.name),
+      c.back ? el('span', { class: 'role-tag' }, '#' + c.back) : null,
+      el('span', { class: 'icon-btn', onclick: e => {
+        e.stopPropagation();
+        openContestantModal(rodeo, cls, c);
+      } }, [icon('edit')])
+    ]);
+  }
+
+  function filterList(query) {
+    const q = query.trim().toLowerCase();
+    list.querySelectorAll('.rider-row').forEach(row => {
+      row.hidden = q && !row.dataset.name.includes(q);
+    });
+  }
+
+  if (contestants.length === 0) {
+    list.appendChild(el('div', { class: 'rider-empty' }, [
+      el('p', {}, 'No contestants yet. Click "Add Contestant" to get started.')
+    ]));
+  } else {
+    [...contestants].sort((a, b) => a.name.localeCompare(b.name)).forEach(c => list.appendChild(rowFor(c)));
+  }
+
+  return el('div', { class: 'page' }, [
+    el('div', { class: 'riders-panel' }, [
+      el('div', { class: 'riders-toolbar' }, [
+        el('div', { class: 'riders-stats' }, [
+          el('span', { class: 'muted' }, [el('strong', {}, String(contestants.length)), ' total'])
+        ]),
+        searchInput,
+        el('button', {
+          class: 'btn btn-primary',
+          onclick: () => openContestantModal(rodeo, cls, null)
+        }, [icon('plus'), 'Add Contestant'])
+      ]),
+      list
+    ]),
+    contestants.length > 0
+      ? el('div', { class: 'sticky-actions' }, [
+          el('a', {
+            class: 'btn btn-primary btn-lg',
+            href: `#/rodeo/${rodeo.id}/class/${cls.id}/times`
+          }, 'Go to Times →')
+        ])
+      : null
+  ]);
+}
+
+function openContestantModal(rodeo, cls, contestant) {
+  const isEdit = !!contestant;
+  const form = el('form', { class: 'form' });
+  form.innerHTML = `
+    <label class="field">
+      <span class="field-label">Contestant name</span>
+      <input class="input" name="name" required autocomplete="off" placeholder="Last, First">
+    </label>
+    <label class="field">
+      <span class="field-label">Back number <span class="muted">(optional)</span></span>
+      <input class="input" name="back" autocomplete="off" placeholder="42">
+    </label>
+  `;
+  const nameInput = form.querySelector('[name=name]');
+  const backInput = form.querySelector('[name=back]');
+  if (contestant) {
+    nameInput.value = contestant.name;
+    backInput.value = contestant.back || '';
+  }
+
+  const apply = (close, addAnother = false) => {
+    const name = nameInput.value.trim();
+    if (!name) { nameInput.focus(); return; }
+    const back = backInput.value.trim();
+    if (isEdit) {
+      Store.updateContestant(rodeo.id, cls.id, contestant.id, { name, back });
+      close();
+      toast('Contestant updated');
+    } else {
+      const newId = Store.addContestant(rodeo.id, cls.id, { name, back });
+      if (newId === null) {
+        toast('That name already exists', 'warn');
+        return;
+      }
+      if (addAnother) {
+        nameInput.value = '';
+        backInput.value = '';
+        nameInput.focus();
+        toast(`Added ${name}`, 'success');
+      } else {
+        close();
+        toast(`Added ${name}`, 'success');
+      }
+    }
+  };
+
+  const actions = isEdit
+    ? [
+        { label: 'Remove', class: 'btn btn-danger-ghost', onClick: async c => {
+          c();
+          if (await confirm(`Remove ${contestant.name}?`, { confirmLabel: 'Remove', danger: true })) {
+            Store.removeContestant(rodeo.id, cls.id, contestant.id);
+            toast('Contestant removed');
+          }
+        } },
+        { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
+        { label: 'Save', class: 'btn btn-primary', onClick: c => apply(c) }
+      ]
+    : [
+        { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
+        { label: 'Add & New', class: 'btn btn-secondary', onClick: c => apply(c, true) },
+        { label: 'Add Contestant', class: 'btn btn-primary', onClick: c => apply(c) }
+      ];
+
+  modal({ title: isEdit ? 'Edit Contestant' : 'Add Contestant', body: form, actions });
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    document.querySelector('.modal-footer .btn-primary')?.click();
+  });
+
+  setTimeout(() => nameInput.focus(), 50);
+}
+
+// ─── Draw panel (team_roping classes only) ─────────────────────────────────
+
+function panel_draw(rodeo, cls) {
+  if (cls.teams.length === 0) {
     return el('div', { class: 'page' }, [
       el('div', { class: 'empty-state' }, [
         el('div', { class: 'empty-illustration' }, '🪢'),
         el('h2', {}, 'No draw yet'),
         el('p', { class: 'muted' }, 'Add headers and heelers to the sign-ups tab, then generate the draw.'),
-        el('a', { class: 'btn btn-primary', href: `#/event/${evt.id}/signups` }, 'Go to Sign-ups')
+        el('a', { class: 'btn btn-primary', href: `#/rodeo/${rodeo.id}/class/${cls.id}/signups` }, 'Go to Sign-ups')
       ])
     ]);
   }
 
-  const conflictCount = evt.teams.filter(t => t.conflict).length;
-  const headerCount = evt.riders.filter(r => r.isHeader).length;
-  const heelerCount = evt.riders.filter(r => r.isHeeler).length;
-  const skipped = headerCount * heelerCount - evt.teams.length;
+  const conflictCount = cls.teams.filter(t => t.conflict).length;
+  const headerCount = cls.riders.filter(r => r.isHeader).length;
+  const heelerCount = cls.riders.filter(r => r.isHeeler).length;
+  const skipped = headerCount * heelerCount - cls.teams.length;
 
   const list = el('ol', { class: 'draw-list' });
-  evt.teams.forEach((t, i) => {
+  cls.teams.forEach((t, i) => {
     list.appendChild(el('li', { class: 'draw-row' + (t.conflict ? ' is-conflict' : '') }, [
       el('span', { class: 'draw-num' }, String(i + 1)),
       el('div', { class: 'draw-pair' }, [
@@ -521,7 +750,7 @@ function panel_draw(evt) {
 
   const summary = el('div', { class: 'summary-bar' }, [
     el('div', {}, [
-      el('strong', {}, `${evt.teams.length} teams`),
+      el('strong', {}, `${cls.teams.length} teams`),
       el('span', { class: 'muted' }, ` · ${headerCount} × ${heelerCount}`),
       skipped > 0 ? el('span', { class: 'muted' }, ` · ${skipped} self-pair${skipped > 1 ? 's' : ''} excluded`) : null,
       conflictCount > 0 ? el('span', { class: 'inline-warn' }, ` · ${conflictCount} unavoidable conflict${conflictCount > 1 ? 's' : ''}`) : null
@@ -531,7 +760,7 @@ function panel_draw(evt) {
         class: 'btn btn-ghost',
         onclick: async () => {
           if (await confirm('Re-generate the draw? This will replace the current order.', { confirmLabel: 'Re-generate' })) {
-            Store.generateDraw(evt.id);
+            Store.generateDraw(rodeo.id, cls.id);
             toast('Draw re-generated');
           }
         }
@@ -539,7 +768,7 @@ function panel_draw(evt) {
       el('button', {
         class: 'btn btn-secondary',
         onclick: () => {
-          const txt = evt.teams.map((t, i) => `${i + 1}. ${t.header} / ${t.heeler}`).join('\n');
+          const txt = cls.teams.map((t, i) => `${i + 1}. ${t.header} / ${t.heeler}`).join('\n');
           navigator.clipboard.writeText(txt).then(() => toast('Copied draw to clipboard'));
         }
       }, [icon('copy'), 'Copy'])
@@ -549,29 +778,29 @@ function panel_draw(evt) {
   return el('div', { class: 'page' }, [summary, list]);
 }
 
-// ─── Slips panel ────────────────────────────────────────────────────────────
+// ─── Slips panel (team_roping classes only) ────────────────────────────────
 
-function panel_slips(evt) {
-  if (evt.teams.length === 0) {
+function panel_slips(rodeo, cls) {
+  if (cls.teams.length === 0) {
     return el('div', { class: 'page' }, [
       el('div', { class: 'empty-state' }, [
         el('div', { class: 'empty-illustration' }, '📄'),
         el('h2', {}, 'No slips to print'),
         el('p', { class: 'muted' }, 'Generate the draw first to produce printable time slips.'),
-        el('a', { class: 'btn btn-primary', href: `#/event/${evt.id}/signups` }, 'Go to Sign-ups')
+        el('a', { class: 'btn btn-primary', href: `#/rodeo/${rodeo.id}/class/${cls.id}/signups` }, 'Go to Sign-ups')
       ])
     ]);
   }
 
-  const pageCount = Math.ceil(evt.teams.length / 3);
+  const pageCount = Math.ceil(cls.teams.length / 3);
   const container = el('div', { class: 'slips-container' });
 
   for (let p = 0; p < pageCount; p++) {
     const page = el('div', { class: 'slip-page' });
     for (let s = 0; s < 3; s++) {
-      const team = evt.teams[p * 3 + s];
+      const team = cls.teams[p * 3 + s];
       if (s > 0) page.appendChild(el('div', { class: 'cut-line' }));
-      page.appendChild(team ? buildSlip(team, evt) : el('div', { class: 'slip slip-empty' }));
+      page.appendChild(team ? buildSlip(team, rodeo, cls) : el('div', { class: 'slip slip-empty' }));
     }
     container.appendChild(page);
   }
@@ -579,7 +808,7 @@ function panel_slips(evt) {
   const summary = el('div', { class: 'summary-bar no-print' }, [
     el('div', {}, [
       el('strong', {}, `Pages 1 through ${pageCount}`),
-      el('span', { class: 'muted' }, ` · ${evt.teams.length} slips`)
+      el('span', { class: 'muted' }, ` · ${cls.teams.length} slips`)
     ]),
     el('button', { class: 'btn btn-primary', onclick: () => window.print() }, [icon('print'), 'Print Slips'])
   ]);
@@ -587,11 +816,11 @@ function panel_slips(evt) {
   return el('div', { class: 'page' }, [summary, container]);
 }
 
-function buildSlip(team, evt) {
+function buildSlip(team, rodeo, cls) {
   return el('div', { class: 'slip' }, [
     el('div', { class: 'slip-header' }, [
-      el('div', { class: 'slip-event' }, evt.name),
-      evt.date ? el('div', { class: 'slip-date' }, fmtDate(evt.date)) : null
+      el('div', { class: 'slip-event' }, `${rodeo.name} — ${cls.name}`),
+      rodeo.date ? el('div', { class: 'slip-date' }, fmtDate(rodeo.date)) : null
     ]),
     el('div', { class: 'slip-names' }, [
       el('div', { class: 'slip-rider' }, [
@@ -619,65 +848,82 @@ function slipRow(label, isTotal) {
   ]);
 }
 
-// ─── Times panel ────────────────────────────────────────────────────────────
-// Live time entry — the scorekeeper enters Round 1 / Round 2 / Short Go as runs
-// happen (or right after, from the paper slip), and sees a running Total/
-// standings immediately instead of Toni re-typing everything from slips later.
+// ─── Times panel (every discipline — teams or solo contestants share the
+//     same round-scoring shape, see Store.entryTotal/setEntryTime) ────────
+// Live time entry — the scorekeeper enters Round 1 / Round 2 / Short Go as
+// runs happen (or right after, from the paper slip), and sees a running
+// Total/standings immediately instead of re-typing everything from slips
+// later.
 
-// View-only preference (not persisted event data), so declared at module scope
-// to survive the full re-render every Store change triggers.
+// View-only preference (not persisted data), so declared at module scope to
+// survive the full re-render every Store change triggers.
 let timesSort = 'draw';
 
-function panel_times(evt) {
-  if (evt.teams.length === 0) {
+function panel_times(rodeo, cls) {
+  const team = isTeamDiscipline(cls.discipline);
+  const entries = team ? cls.teams : cls.contestants;
+
+  if (entries.length === 0) {
     return el('div', { class: 'page' }, [
       el('div', { class: 'empty-state' }, [
         el('div', { class: 'empty-illustration' }, '⏱️'),
-        el('h2', {}, 'No teams to score yet'),
-        el('p', { class: 'muted' }, 'Generate the draw first, then enter times here as runs happen.'),
-        el('a', { class: 'btn btn-primary', href: `#/event/${evt.id}/draw` }, 'Go to Draw')
+        el('h2', {}, team ? 'No teams to score yet' : 'No contestants to score yet'),
+        el('p', { class: 'muted' }, team
+          ? 'Generate the draw first, then enter times here as runs happen.'
+          : 'Add contestants first, then enter times here as runs happen.'),
+        el('a', {
+          class: 'btn btn-primary',
+          href: `#/rodeo/${rodeo.id}/class/${cls.id}/${team ? 'draw' : 'signups'}`
+        }, team ? 'Go to Draw' : 'Go to Sign-ups')
       ])
     ]);
   }
 
+  const decimals = decimalsFor(cls.discipline);
   const rows = timesSort === 'standings'
-    ? [...evt.teams].sort((a, b) => {
-        const ta = Store.teamTotal(a), tb = Store.teamTotal(b);
+    ? [...entries].sort((a, b) => {
+        const ta = Store.entryTotal(a), tb = Store.entryTotal(b);
         if (ta.total != null && tb.total != null) return ta.total - tb.total;
         if (ta.total != null) return -1;
         if (tb.total != null) return 1;
         return 0;
       })
-    : evt.teams;
+    : entries;
 
   const list = el('div', { class: 'times-list' });
-  rows.forEach(t => {
-    const { total, hasNoTime } = Store.teamTotal(t);
+  rows.forEach(entry => {
+    const { total, hasNoTime } = Store.entryTotal(entry);
+    const nameEl = team
+      ? el('div', { class: 'draw-pair' }, [
+          el('span', { class: 'rider header-name' }, entry.header),
+          el('span', { class: 'pair-sep' }, '/'),
+          el('span', { class: 'rider heeler-name' }, entry.heeler)
+        ])
+      : el('div', { class: 'draw-pair' }, [
+          el('span', { class: 'rider header-name' }, entry.name),
+          entry.back ? el('span', { class: 'pair-sep muted' }, '#' + entry.back) : null
+        ]);
     list.appendChild(el('div', { class: 'times-row' }, [
-      el('span', { class: 'draw-num' }, String(evt.teams.indexOf(t) + 1)),
-      el('div', { class: 'draw-pair' }, [
-        el('span', { class: 'rider header-name' }, t.header),
-        el('span', { class: 'pair-sep' }, '/'),
-        el('span', { class: 'rider heeler-name' }, t.heeler)
-      ]),
-      timeField(evt, t, 'r1', 'R1'),
-      timeField(evt, t, 'r2', 'R2'),
-      timeField(evt, t, 'shortGo', 'SG'),
+      el('span', { class: 'draw-num' }, String(entries.indexOf(entry) + 1)),
+      nameEl,
+      timeField(rodeo, cls, entry, 'r1', 'R1', decimals),
+      timeField(rodeo, cls, entry, 'r2', 'R2', decimals),
+      timeField(rodeo, cls, entry, 'shortGo', 'SG', decimals),
       el('div', { class: 'times-total' + (hasNoTime ? ' has-no-time' : '') }, [
         el('span', { class: 'times-total-label' }, 'Total'),
         el('span', { class: 'times-total-value' },
-          total != null ? total.toFixed(2) : (hasNoTime ? 'NT' : '—'))
+          total != null ? total.toFixed(decimals) : (hasNoTime ? 'NT' : '—'))
       ])
     ]));
   });
 
   const summary = el('div', { class: 'summary-bar' }, [
-    el('div', {}, [el('strong', {}, `${evt.teams.length} teams`)]),
+    el('div', {}, [el('strong', {}, `${entries.length} ${team ? 'teams' : 'contestants'}`)]),
     el('div', { class: 'summary-actions' }, [
       el('button', {
         class: 'btn btn-ghost' + (timesSort === 'draw' ? ' is-active' : ''),
         onclick: () => { timesSort = 'draw'; render(); }
-      }, 'Draw order'),
+      }, team ? 'Draw order' : 'Sign-up order'),
       el('button', {
         class: 'btn btn-ghost' + (timesSort === 'standings' ? ' is-active' : ''),
         onclick: () => { timesSort = 'standings'; render(); }
@@ -692,21 +938,21 @@ function panel_times(evt) {
 // toggle. Uses onchange (commits on blur/Enter), not oninput — every Store
 // write triggers a full app re-render (see render()/Store.subscribe below),
 // which would otherwise steal focus back after every keystroke.
-function timeField(evt, team, round, label) {
+function timeField(rodeo, cls, entry, round, label, decimals) {
   const noTimeKey = round + 'NoTime';
-  const isNoTime = !!team[noTimeKey];
+  const isNoTime = !!entry[noTimeKey];
   const input = el('input', {
     class: 'input time-input',
     type: 'number',
-    step: '0.01',
+    step: stepFor(cls.discipline),
     min: '0',
     inputmode: 'decimal',
-    placeholder: '0.00',
-    value: team[round] != null ? String(team[round]) : '',
+    placeholder: (0).toFixed(decimals),
+    value: entry[round] != null ? String(entry[round]) : '',
     disabled: isNoTime,
     onchange: e => {
       const v = parseFloat(e.target.value);
-      Store.setTeamTime(evt.id, team.id, round, { seconds: isNaN(v) ? null : v, noTime: false });
+      Store.setEntryTime(rodeo.id, cls.id, entry.id, round, { seconds: isNaN(v) ? null : v, noTime: false });
     }
   });
   const ntBtn = el('button', {
@@ -714,7 +960,7 @@ function timeField(evt, team, round, label) {
     type: 'button',
     title: 'No time (didn’t catch)',
     onclick: () => {
-      Store.setTeamTime(evt.id, team.id, round, { seconds: null, noTime: !isNoTime });
+      Store.setEntryTime(rodeo.id, cls.id, entry.id, round, { seconds: null, noTime: !isNoTime });
     }
   }, 'NT');
   return el('div', { class: 'time-field' }, [
@@ -723,9 +969,9 @@ function timeField(evt, team, round, label) {
   ]);
 }
 
-// ─── Modals ─────────────────────────────────────────────────────────────────
+// ─── Modals: Rodeo ──────────────────────────────────────────────────────────
 
-function openCreateEventModal() {
+function openCreateRodeoModal() {
   const today = new Date().toISOString().slice(0, 10);
   const form = el('form', { class: 'form' });
   form.innerHTML = `
@@ -743,23 +989,23 @@ function openCreateEventModal() {
     </label>
   `;
 
-  const close = modal({
-    title: 'New Event',
+  modal({
+    title: 'New Rodeo',
     body: form,
     actions: [
       { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
-      { label: 'Create Event', class: 'btn btn-primary', onClick: c => {
+      { label: 'Create Rodeo', class: 'btn btn-primary', onClick: c => {
         const fd = new FormData(form);
         const name = (fd.get('name') || '').toString().trim();
         if (!name) { form.querySelector('[name=name]').focus(); return; }
-        const id = Store.createEvent({
+        const id = Store.createRodeo({
           name,
           date: (fd.get('date') || '').toString(),
           location: (fd.get('location') || '').toString().trim()
         });
         c();
-        navigate('/event/' + id + '/signups');
-        toast('Event created');
+        navigate('/rodeo/' + id);
+        toast('Rodeo created');
       } }
     ]
   });
@@ -771,60 +1017,152 @@ function openCreateEventModal() {
   });
 }
 
-function openEditEventModal(evt) {
+function openEditRodeoModal(rodeo) {
   const form = el('form', { class: 'form' });
   form.innerHTML = `
     <label class="field">
       <span class="field-label">Name</span>
-      <input class="input" name="name" required value="${escHtml(evt.name)}">
+      <input class="input" name="name" required value="${escHtml(rodeo.name)}">
     </label>
     <label class="field">
       <span class="field-label">Date</span>
-      <input class="input" name="date" type="date" value="${escHtml(evt.date || '')}">
+      <input class="input" name="date" type="date" value="${escHtml(rodeo.date || '')}">
     </label>
     <label class="field">
       <span class="field-label">Location</span>
-      <input class="input" name="location" value="${escHtml(evt.location || '')}">
+      <input class="input" name="location" value="${escHtml(rodeo.location || '')}">
     </label>
     <label class="field">
       <span class="field-label">Status</span>
       <select class="input" name="status">
-        <option value="draft" ${evt.status === 'draft' ? 'selected' : ''}>Draft</option>
-        <option value="running" ${evt.status === 'running' ? 'selected' : ''}>Running</option>
-        <option value="closed" ${evt.status === 'closed' ? 'selected' : ''}>Closed</option>
+        <option value="draft" ${rodeo.status === 'draft' ? 'selected' : ''}>Draft</option>
+        <option value="running" ${rodeo.status === 'running' ? 'selected' : ''}>Running</option>
+        <option value="closed" ${rodeo.status === 'closed' ? 'selected' : ''}>Closed</option>
       </select>
     </label>
   `;
 
-  const close = modal({
-    title: 'Edit Event',
+  modal({
+    title: 'Edit Rodeo',
     body: form,
     actions: [
-      { label: 'Delete Event', class: 'btn btn-danger-ghost', onClick: async c => {
+      { label: 'Delete Rodeo', class: 'btn btn-danger-ghost', onClick: async c => {
         c();
-        if (await confirm(`Delete "${evt.name}"? This can't be undone.`, { confirmLabel: 'Delete', danger: true })) {
-          Store.deleteEvent(evt.id);
+        if (await confirm(`Delete "${rodeo.name}"? This can't be undone.`, { confirmLabel: 'Delete', danger: true })) {
+          Store.deleteRodeo(rodeo.id);
           navigate('/');
-          toast('Event deleted');
+          toast('Rodeo deleted');
         }
       } },
       { label: 'Duplicate', class: 'btn btn-ghost', onClick: c => {
-        const id = Store.duplicateEvent(evt.id);
+        const id = Store.duplicateRodeo(rodeo.id);
         c();
-        if (id) { navigate('/event/' + id + '/signups'); toast('Event duplicated'); }
+        if (id) { navigate('/rodeo/' + id); toast('Rodeo duplicated'); }
       } },
       { label: 'Save', class: 'btn btn-primary', onClick: c => {
         const fd = new FormData(form);
         const name = (fd.get('name') || '').toString().trim();
         if (!name) return;
-        Store.updateEvent(evt.id, {
+        Store.updateRodeo(rodeo.id, {
           name,
           date: (fd.get('date') || '').toString(),
           location: (fd.get('location') || '').toString().trim(),
           status: (fd.get('status') || 'draft').toString()
         });
         c();
-        toast('Event updated');
+        toast('Rodeo updated');
+      } }
+    ]
+  });
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    document.querySelector('.modal-footer .btn-primary')?.click();
+  });
+}
+
+// ─── Modals: Class ──────────────────────────────────────────────────────────
+
+function openCreateClassModal(rodeo) {
+  let discipline = DISCIPLINES[0].code;
+  const form = el('form', { class: 'form' });
+  form.innerHTML = `
+    <label class="field">
+      <span class="field-label">Class name</span>
+      <input class="input" name="name" autocomplete="off" placeholder="e.g. 1D Roping, Open Barrels">
+    </label>
+    <div class="field">
+      <span class="field-label">Discipline</span>
+      <div class="role-chooser discipline-chooser" id="discipline-chooser">
+        ${DISCIPLINES.map(d => `<label class="role-option" data-value="${d.code}"><input type="radio" name="discipline" value="${d.code}"> ${d.label}</label>`).join('')}
+      </div>
+    </div>
+  `;
+  const nameInput = form.querySelector('[name=name]');
+
+  const setDiscipline = v => {
+    discipline = v;
+    form.querySelectorAll('.role-option').forEach(o => {
+      o.classList.toggle('selected', o.dataset.value === v);
+      o.querySelector('input').checked = o.dataset.value === v;
+    });
+    if (!nameInput.dataset.touched) nameInput.value = disciplineLabel(v);
+  };
+  form.querySelectorAll('.role-option').forEach(o => {
+    o.addEventListener('click', e => { e.preventDefault(); setDiscipline(o.dataset.value); });
+  });
+  nameInput.addEventListener('input', () => { nameInput.dataset.touched = '1'; });
+  setDiscipline(discipline);
+
+  modal({
+    title: 'Add Class',
+    body: form,
+    actions: [
+      { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
+      { label: 'Add Class', class: 'btn btn-primary', onClick: c => {
+        const name = nameInput.value.trim();
+        const id = Store.createClass(rodeo.id, { name, discipline });
+        c();
+        if (id) { navigate(`/rodeo/${rodeo.id}/class/${id}/signups`); toast('Class added'); }
+      } }
+    ]
+  });
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    document.querySelector('.modal-footer .btn-primary')?.click();
+  });
+}
+
+function openEditClassModal(rodeo, cls) {
+  const form = el('form', { class: 'form' });
+  form.innerHTML = `
+    <label class="field">
+      <span class="field-label">Class name</span>
+      <input class="input" name="name" required value="${escHtml(cls.name)}">
+    </label>
+    <p class="muted small">Discipline: ${escHtml(disciplineLabel(cls.discipline))} (can't be changed after entries exist)</p>
+  `;
+
+  modal({
+    title: 'Edit Class',
+    body: form,
+    actions: [
+      { label: 'Delete Class', class: 'btn btn-danger-ghost', onClick: async c => {
+        c();
+        if (await confirm(`Delete "${cls.name}"? This can't be undone.`, { confirmLabel: 'Delete', danger: true })) {
+          Store.deleteClass(rodeo.id, cls.id);
+          navigate('/rodeo/' + rodeo.id);
+          toast('Class deleted');
+        }
+      } },
+      { label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() },
+      { label: 'Save', class: 'btn btn-primary', onClick: c => {
+        const name = form.querySelector('[name=name]').value.trim();
+        if (!name) return;
+        Store.updateClass(rodeo.id, cls.id, { name });
+        c();
+        toast('Class updated');
       } }
     ]
   });
@@ -841,8 +1179,9 @@ function render() {
   const route = parseRoute();
   const root = document.getElementById('app');
   let view;
-  if (route.name === 'event') view = view_event(route.id, route.tab);
-  else view = view_events();
+  if (route.name === 'class') view = view_class(route.rodeoId, route.classId, route.tab);
+  else if (route.name === 'rodeo') view = view_rodeo(route.rodeoId);
+  else view = view_rodeos();
   root.innerHTML = '';
   root.appendChild(view);
 }

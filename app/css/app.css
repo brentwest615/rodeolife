@@ -805,6 +805,10 @@ select.input { cursor: pointer; }
   font-weight: 600;
 }
 
+/* Discipline names run longer than Header/Heeler/Both — 2 columns instead of
+   3 keeps each label on one line, which matters more on a phone screen. */
+.discipline-chooser { grid-template-columns: repeat(2, 1fr); }
+
 /* ─── Toast ──────────────────────────────────────────────────────────── */
 
 .toast-root {
