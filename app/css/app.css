@@ -630,6 +630,16 @@ select.input { cursor: pointer; }
 }
 .times-total.has-no-time .times-total-value { color: var(--warning); }
 
+/* Read-only standings (parent-facing share links) — same row shape as the
+   producer's live time entry, minus the inputs: plain numbers only. */
+.ro-time {
+  width: 60px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  color: var(--text-2);
+}
+
 /* ─── Slips ──────────────────────────────────────────────────────────── */
 
 .slips-container {

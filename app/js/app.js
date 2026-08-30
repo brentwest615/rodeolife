@@ -139,8 +139,10 @@ function confirm(msg, { confirmLabel = 'Confirm', danger = false } = {}) {
 
 // ─── Routing ────────────────────────────────────────────────────────────────
 // #/                                          -> rodeo list
-// #/rodeo/:rodeoId                            -> class list for that rodeo
-// #/rodeo/:rodeoId/class/:classId/:tab        -> class detail
+// #/rodeo/:rodeoId                            -> class list for that rodeo (producer)
+// #/rodeo/:rodeoId/class/:classId/:tab        -> class detail (producer)
+// #/standings/:rodeoId                        -> read-only class list (parents)
+// #/standings/:rodeoId/:classId               -> read-only leaderboard (parents)
 
 function parseRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
@@ -152,7 +154,27 @@ function parseRoute() {
     }
     return { name: 'rodeo', rodeoId: parts[1] };
   }
+  if (parts[0] === 'standings' && parts[1]) {
+    if (parts[2]) return { name: 'standingsClass', rodeoId: parts[1], classId: parts[2] };
+    return { name: 'standingsRodeo', rodeoId: parts[1] };
+  }
   return { name: 'rodeos' };
+}
+
+// Absolute, copyable URL for a read-only standings page — works regardless
+// of where the app is hosted (Vercel, file://, etc).
+function standingsUrl(rodeoId, classId) {
+  const base = location.href.split('#')[0];
+  return classId ? `${base}#/standings/${rodeoId}/${classId}` : `${base}#/standings/${rodeoId}`;
+}
+
+async function copyStandingsLink(rodeoId, classId) {
+  try {
+    await navigator.clipboard.writeText(standingsUrl(rodeoId, classId));
+    toast('Standings link copied — text or share it with parents', 'success');
+  } catch (_) {
+    toast('Could not copy — long-press the link to copy it manually', 'warn');
+  }
 }
 
 function navigate(path) {
@@ -306,6 +328,10 @@ function classCard(rodeo, cls) {
 
 function rodeoActions(rodeo) {
   const actions = [];
+  actions.push(el('button', {
+    class: 'btn btn-ghost',
+    onclick: () => copyStandingsLink(rodeo.id)
+  }, [icon('copy'), 'Share standings']));
   actions.push(el('button', { class: 'btn btn-ghost', onclick: () => openEditRodeoModal(rodeo) }, [icon('edit'), 'Edit']));
   if (rodeo.status !== 'closed') {
     actions.push(el('button', { class: 'btn btn-ghost', onclick: () => { Store.setStatus(rodeo.id, 'closed'); toast('Rodeo closed'); } }, [icon('archive'), 'Close']));
@@ -340,6 +366,10 @@ function view_class(rodeoId, classId, tab) {
       ])
     ]),
     el('div', { class: 'header-actions' }, [
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => copyStandingsLink(rodeoId, classId)
+      }, [icon('copy'), 'Share standings']),
       el('button', { class: 'btn btn-ghost', onclick: () => openEditClassModal(rodeo, cls) }, [icon('edit'), 'Edit'])
     ])
   ]);
@@ -378,6 +408,118 @@ function tabLink(label, href, active, count) {
   return el('a', { class: 'tab' + (active ? ' active' : ''), href }, [
     label,
     count !== undefined && count !== '' ? el('span', { class: 'tab-count' }, String(count)) : null
+  ]);
+}
+
+// ─── Read-only standings (parent-facing, shareable links) ──────────────────
+// No inputs, no edit affordances — safe to hand out even though there's no
+// login, since there's nothing on this page to accidentally change. Lives in
+// the same render()/Store.subscribe loop as every other view, so it updates
+// live right along with everything else — no separate refresh mechanism.
+
+function view_standings_rodeo(rodeoId) {
+  const rodeo = Store.getRodeo(rodeoId);
+  if (!rodeo) {
+    return el('div', { class: 'shell' }, [
+      el('div', { class: 'empty-state' }, [el('h2', {}, 'Rodeo not found')])
+    ]);
+  }
+  const classes = rodeo.classes || [];
+
+  const header = el('header', { class: 'app-header' }, [
+    el('div', { class: 'brand-row' }, [
+      el('div', { class: 'event-title' }, [
+        el('h1', {}, rodeo.name),
+        el('div', { class: 'event-sub' }, [
+          fmtDate(rodeo.date) || 'No date',
+          rodeo.location ? ' · ' + rodeo.location : ''
+        ])
+      ])
+    ])
+  ]);
+
+  const main = el('div', { class: 'page' }, [
+    classes.length === 0
+      ? el('p', { class: 'muted' }, 'No events yet — check back soon.')
+      : el('div', { class: 'event-grid' },
+          classes.map(cls => el('a', { class: 'event-card', href: `#/standings/${rodeoId}/${cls.id}` }, [
+            el('div', { class: 'event-card-top' }, [
+              el('h3', {}, cls.name),
+              el('span', { class: 'badge' }, disciplineLabel(cls.discipline))
+            ])
+          ])))
+  ]);
+
+  return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
+}
+
+function view_standings_class(rodeoId, classId) {
+  const rodeo = Store.getRodeo(rodeoId);
+  const cls = rodeo && Store.getClass(rodeoId, classId);
+  if (!rodeo || !cls) {
+    return el('div', { class: 'shell' }, [
+      el('div', { class: 'empty-state' }, [el('h2', {}, 'Not found')])
+    ]);
+  }
+  const team = isTeamDiscipline(cls.discipline);
+  const entries = team ? cls.teams : cls.contestants;
+  const decimals = decimalsFor(cls.discipline);
+
+  const header = el('header', { class: 'app-header' }, [
+    el('div', { class: 'brand-row' }, [
+      el('a', { class: 'icon-btn', href: `#/standings/${rodeoId}`, 'aria-label': 'Back' }, [icon('back')]),
+      el('div', { class: 'event-title' }, [
+        el('h1', {}, cls.name),
+        el('div', { class: 'event-sub' }, [disciplineLabel(cls.discipline), ' · ', rodeo.name])
+      ])
+    ])
+  ]);
+
+  let main;
+  if (entries.length === 0) {
+    main = el('div', { class: 'empty-state' }, [
+      el('p', { class: 'muted' }, 'No one has run yet — check back soon.')
+    ]);
+  } else {
+    const ranked = [...entries].sort((a, b) => {
+      const ta = Store.entryTotal(a), tb = Store.entryTotal(b);
+      if (ta.total != null && tb.total != null) return ta.total - tb.total;
+      if (ta.total != null) return -1;
+      if (tb.total != null) return 1;
+      return 0;
+    });
+    main = el('div', { class: 'page' }, [
+      el('div', { class: 'times-list' }, ranked.map((entry, i) => standingsRowReadOnly(entry, i + 1, team, decimals)))
+    ]);
+  }
+
+  return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
+}
+
+function standingsRowReadOnly(entry, rank, team, decimals) {
+  const { total, hasNoTime } = Store.entryTotal(entry);
+  const nameEl = team
+    ? el('div', { class: 'draw-pair' }, [
+        el('span', { class: 'rider header-name' }, entry.header),
+        el('span', { class: 'pair-sep' }, '/'),
+        el('span', { class: 'rider heeler-name' }, entry.heeler)
+      ])
+    : el('div', { class: 'draw-pair' }, [
+        el('span', { class: 'rider header-name' }, entry.name),
+        entry.back ? el('span', { class: 'pair-sep muted' }, '#' + entry.back) : null
+      ]);
+  const roundText = (key) => entry[key + 'NoTime'] ? 'NT' : (entry[key] != null ? entry[key].toFixed(decimals) : '—');
+  return el('div', { class: 'times-row times-row-readonly' }, [
+    el('span', { class: 'draw-num' }, String(rank)),
+    nameEl,
+    el('span', { class: 'ro-time' }, roundText('r1')),
+    el('span', { class: 'ro-time' }, roundText('r2')),
+    el('span', { class: 'ro-time' }, roundText('shortGo')),
+    el('div', { class: 'times-total' + (hasNoTime ? ' has-no-time' : '') }, [
+      el('span', { class: 'times-total-label' }, 'Total'),
+      el('span', { class: 'times-total-value' },
+        total != null ? total.toFixed(decimals) : (hasNoTime ? 'NT' : '—'))
+    ])
   ]);
 }
 
@@ -1181,6 +1323,8 @@ function render() {
   let view;
   if (route.name === 'class') view = view_class(route.rodeoId, route.classId, route.tab);
   else if (route.name === 'rodeo') view = view_rodeo(route.rodeoId);
+  else if (route.name === 'standingsClass') view = view_standings_class(route.rodeoId, route.classId);
+  else if (route.name === 'standingsRodeo') view = view_standings_rodeo(route.rodeoId);
   else view = view_rodeos();
   root.innerHTML = '';
   root.appendChild(view);
