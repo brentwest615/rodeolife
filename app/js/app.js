@@ -37,6 +37,7 @@ function icon(name) {
     play: '<polygon points="5 3 19 12 5 21 5 3"/>',
     archive: '<path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+    eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
     camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'
   };
   const svg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ''}</svg>`;
@@ -330,6 +331,10 @@ function classCard(rodeo, cls) {
 
 function rodeoActions(rodeo) {
   const actions = [];
+  actions.push(el('a', {
+    class: 'btn btn-ghost',
+    href: `#/standings/${rodeo.id}`
+  }, [icon('eye'), 'View standings']));
   actions.push(el('button', {
     class: 'btn btn-ghost',
     onclick: () => copyStandingsLink(rodeo.id)
@@ -368,6 +373,10 @@ function view_class(rodeoId, classId, tab) {
       ])
     ]),
     el('div', { class: 'header-actions' }, [
+      el('a', {
+        class: 'btn btn-ghost',
+        href: `#/standings/${rodeoId}/${classId}`
+      }, [icon('eye'), 'View standings']),
       el('button', {
         class: 'btn btn-ghost',
         onclick: () => copyStandingsLink(rodeoId, classId)
