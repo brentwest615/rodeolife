@@ -1154,9 +1154,76 @@ function slipRow(label, isTotal) {
 // Total/standings immediately instead of re-typing everything from slips
 // later.
 
-// View-only preference (not persisted data), so declared at module scope to
+// View-only preferences (not persisted data), so declared at module scope to
 // survive the full re-render every Store change triggers.
 let timesSort = 'draw';
+let timesView = 'wizard';
+let wizardRound = 'r1';
+
+const ROUND_LABELS = { r1: 'R1', r2: 'R2', shortGo: 'Short Go' };
+
+function entryDisplayName(cls, entry) {
+  return isTeamDiscipline(cls.discipline) ? `${entry.header} / ${entry.heeler}` : entry.name;
+}
+
+// No-time reason picker — discipline-specific preset chips (single-select)
+// plus an optional free-text note, same shape as the mobile app. Combined
+// into one string ("Preset · note") on save; either half can be empty.
+function openNoTimeModal(rodeo, cls, entry, round, roundLabel, onDone) {
+  const reasons = reasonsFor(cls.discipline);
+  const existing = entry[round + 'NoTimeReason'] || '';
+  let selected = '';
+  let initialNote = existing;
+  for (const r of reasons) {
+    if (existing === r) { selected = r; initialNote = ''; break; }
+    if (existing.startsWith(r + ' · ')) { selected = r; initialNote = existing.slice(r.length + 3); break; }
+  }
+
+  const chipsWrap = el('div', { class: 'reason-chips' });
+  function renderChips() {
+    chipsWrap.innerHTML = '';
+    reasons.forEach(r => {
+      chipsWrap.appendChild(el('button', {
+        type: 'button',
+        class: 'reason-chip' + (selected === r ? ' selected' : ''),
+        onclick: () => { selected = selected === r ? '' : r; renderChips(); }
+      }, r));
+    });
+  }
+  renderChips();
+
+  const noteInput = el('input', { class: 'input', placeholder: 'Note (optional)', value: initialNote });
+  const isAlreadyNT = !!entry[round + 'NoTime'];
+
+  const actions = [];
+  if (isAlreadyNT) {
+    actions.push({ label: 'Clear No Time', class: 'btn btn-danger-ghost', onClick: c => {
+      Store.setEntryTime(rodeo.id, cls.id, entry.id, round, { seconds: null, noTime: false, reason: null });
+      c();
+      toast('No-time cleared');
+      if (onDone) onDone();
+    } });
+  }
+  actions.push({ label: 'Cancel', class: 'btn btn-ghost', onClick: c => c() });
+  actions.push({ label: 'Set No Time', class: 'btn btn-primary', onClick: c => {
+    const note = noteInput.value.trim();
+    const reason = [selected, note].filter(Boolean).join(' · ') || null;
+    Store.setEntryTime(rodeo.id, cls.id, entry.id, round, { seconds: null, noTime: true, reason });
+    c();
+    toast('Marked no time');
+    if (onDone) onDone();
+  } });
+
+  modal({
+    title: 'No time',
+    body: el('div', {}, [
+      el('p', { class: 'muted', style: 'margin-bottom:12px' }, `${entryDisplayName(cls, entry)} · ${roundLabel}`),
+      chipsWrap,
+      noteInput
+    ]),
+    actions
+  });
+}
 
 function panel_times(rodeo, cls) {
   const team = isTeamDiscipline(cls.discipline);
@@ -1179,6 +1246,22 @@ function panel_times(rodeo, cls) {
   }
 
   const decimals = decimalsFor(cls.discipline);
+
+  const viewToggle = el('div', { class: 'view-toggle' }, [
+    el('button', {
+      class: 'btn btn-ghost' + (timesView === 'wizard' ? ' is-active' : ''),
+      onclick: () => { timesView = 'wizard'; render(); }
+    }, 'Wizard'),
+    el('button', {
+      class: 'btn btn-ghost' + (timesView === 'spreadsheet' ? ' is-active' : ''),
+      onclick: () => { timesView = 'spreadsheet'; render(); }
+    }, 'Spreadsheet')
+  ]);
+
+  if (timesView === 'wizard') {
+    return el('div', { class: 'page' }, [viewToggle, panel_times_wizard(rodeo, cls, team, entries, decimals)]);
+  }
+
   const rows = timesSort === 'standings'
     ? [...entries].sort((a, b) => {
         const ta = Store.entryTotal(a), tb = Store.entryTotal(b);
@@ -1230,7 +1313,100 @@ function panel_times(rodeo, cls) {
     ])
   ]);
 
-  return el('div', { class: 'page' }, [summary, list]);
+  return el('div', { class: 'page' }, [viewToggle, summary, list]);
+}
+
+// ─── Wizard time entry: one entry at a time, current round only ───────────
+// Shows whoever's next un-timed for the selected round, in draw/sign-up
+// order, with a big input and NT button; saving re-renders and the next
+// un-timed entry becomes "up next" automatically — no separate advance
+// logic needed. "Jump to a rider" drops into the spreadsheet view for
+// out-of-order corrections (see the tradeoffs surfaced in the design pass).
+function panel_times_wizard(rodeo, cls, team, entries, decimals) {
+  const round = wizardRound;
+  const roundLabel = ROUND_LABELS[round];
+  const untimed = entries.filter(e => e[round] == null && !e[round + 'NoTime']);
+  const timedCount = entries.length - untimed.length;
+  const pct = entries.length ? Math.round((timedCount / entries.length) * 100) : 0;
+
+  const roundChips = el('div', { class: 'round-chips' }, ['r1', 'r2', 'shortGo'].map(r =>
+    el('button', {
+      type: 'button',
+      class: 'chip' + (wizardRound === r ? ' active' : ''),
+      onclick: () => { wizardRound = r; render(); }
+    }, ROUND_LABELS[r])
+  ));
+
+  const progress = el('div', { class: 'progress-line' }, [
+    el('span', {}, `${timedCount} of ${entries.length} timed`),
+    el('div', { class: 'progress-track' }, [el('div', { class: 'progress-fill', style: `width:${pct}%` })])
+  ]);
+
+  if (untimed.length === 0) {
+    return el('div', {}, [
+      roundChips,
+      progress,
+      el('div', { class: 'empty-state' }, [
+        el('div', { class: 'empty-illustration' }, '✅'),
+        el('h2', {}, `${roundLabel} is all timed`),
+        el('p', { class: 'muted' }, 'Switch rounds above, or jump to the spreadsheet to review or fix anything.'),
+        el('button', { class: 'btn btn-primary', onclick: () => { timesView = 'spreadsheet'; render(); } }, 'Go to spreadsheet view')
+      ])
+    ]);
+  }
+
+  const current = untimed[0];
+  const onDeck = untimed.slice(1, 4);
+  const drawNum = entries.indexOf(current) + 1;
+
+  const timeInput = el('input', {
+    class: 'wizard-time-input',
+    type: 'number',
+    step: stepFor(cls.discipline),
+    min: '0',
+    inputmode: 'decimal',
+    placeholder: (0).toFixed(decimals)
+  });
+
+  function save() {
+    const v = parseFloat(timeInput.value);
+    if (isNaN(v) || v <= 0) { timeInput.focus(); return; }
+    Store.setEntryTime(rodeo.id, cls.id, current.id, round, { seconds: v, noTime: false });
+  }
+
+  const form = el('form', { onsubmit: e => { e.preventDefault(); save(); } }, [
+    el('div', { class: 'wizard-eyebrow' }, `Up next · Run ${drawNum}`),
+    el('div', { class: 'wizard-name' }, entryDisplayName(cls, current)),
+    !team && current.back ? el('div', { class: 'wizard-back' }, '#' + current.back) : null,
+    timeInput,
+    el('div', { class: 'wizard-actions' }, [
+      el('button', {
+        type: 'button',
+        class: 'btn btn-nt',
+        onclick: () => openNoTimeModal(rodeo, cls, current, round, roundLabel)
+      }, 'No time'),
+      el('button', { type: 'submit', class: 'btn btn-save' }, 'Save & Next →')
+    ])
+  ]);
+
+  const wizardCard = el('div', { class: 'wizard-card' }, [form]);
+
+  const queue = onDeck.length
+    ? el('div', {}, [
+        el('div', { class: 'queue-label' }, 'On deck'),
+        ...onDeck.map(e => el('div', { class: 'queue-item' }, [
+          el('span', {}, [el('span', { class: 'num' }, String(entries.indexOf(e) + 1)), entryDisplayName(cls, e)]),
+          !team && e.back ? el('span', {}, '#' + e.back) : null
+        ]))
+      ])
+    : null;
+
+  const jump = el('div', {
+    class: 'jump-link',
+    onclick: () => { timesView = 'spreadsheet'; render(); }
+  }, 'Jump to a specific rider →');
+
+  return el('div', {}, [roundChips, progress, wizardCard, queue, jump]);
 }
 
 // A single R1/R2/Short-Go field: a time input plus a "no time" (didn't catch)
@@ -1258,13 +1434,13 @@ function timeField(rodeo, cls, entry, round, label, decimals) {
     class: 'nt-toggle' + (isNoTime ? ' is-active' : ''),
     type: 'button',
     title: 'No time (didn’t catch)',
-    onclick: () => {
-      Store.setEntryTime(rodeo.id, cls.id, entry.id, round, { seconds: null, noTime: !isNoTime });
-    }
+    onclick: () => openNoTimeModal(rodeo, cls, entry, round, ROUND_LABELS[round])
   }, 'NT');
+  const reason = entry[round + 'NoTimeReason'];
   return el('div', { class: 'time-field' }, [
     el('label', { class: 'time-field-label' }, label),
-    el('div', { class: 'time-field-row' }, [input, ntBtn])
+    el('div', { class: 'time-field-row' }, [input, ntBtn]),
+    isNoTime && reason ? el('div', { class: 'time-field-reason', title: reason }, reason) : null
   ]);
 }
 

@@ -39,3 +39,22 @@ function decimalsFor(code) {
 function stepFor(code) {
   return decimalsFor(code) === 3 ? '0.001' : '0.01';
 }
+
+// No-time reason presets per discipline — ported from the mobile app
+// (rodeo-app's NO_TIME_REASONS), same wording so producers who use both
+// apps see the same options.
+const NO_TIME_REASONS = {
+  team_roping: ['Header missed', 'Heeler missed', 'Time limit', 'Scratch'],
+  breakaway: ['Missed', 'Top knot', 'Illegal catch', 'Time limit', 'Scratch'],
+  tiedown: ['Missed', 'Calf got up', 'Time limit', 'Scratch'],
+  barrels: ['Knocked barrel', 'Broken pattern', 'Time limit', 'Scratch'],
+  poles: ['Broken pattern', 'Off pattern', 'Time limit', 'Scratch'],
+  trail: ['Off pattern', 'Broken pattern', 'Time limit', 'Scratch'],
+  goat_tying: ["Didn't stay tied", 'Illegal tie', 'Time limit', 'Horse stepped on goat', 'Scratch'],
+  flag_racing: ['Dropped/missed flag', 'Broken pattern', 'Knocked barrel', 'Time limit', 'Scratch'],
+  ribbon_roping: ['No catch', 'No ribbon', 'Time limit', 'Scratch', 'No dally']
+};
+
+function reasonsFor(code) {
+  return NO_TIME_REASONS[code] || ['Time limit', 'Scratch'];
+}

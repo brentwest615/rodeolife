@@ -31,12 +31,17 @@
  *     // team_roping ONLY:
  *     riders: { id, name, isHeader, isHeeler }[],
  *     teams: { id, header, heeler, conflict,
- *              r1, r1NoTime, r2, r2NoTime, shortGo, shortGoNoTime }[],
+ *              r1, r1NoTime, r1NoTimeReason, r2, r2NoTime, r2NoTimeReason,
+ *              shortGo, shortGoNoTime, shortGoNoTimeReason }[],
  *     // every OTHER discipline: a flat contestant list, each carrying its own
  *     // times directly (same round fields as a team — no separate runs table,
  *     // so there's nothing to orphan if a contestant is removed):
  *     contestants: { id, name, back,
- *                    r1, r1NoTime, r2, r2NoTime, shortGo, shortGoNoTime }[]
+ *                    r1, r1NoTime, r1NoTimeReason, r2, r2NoTime, r2NoTimeReason,
+ *                    shortGo, shortGoNoTime, shortGoNoTimeReason }[]
+ *     // *NoTimeReason is a preset (from disciplines.js reasonsFor) and/or a
+ *     // free-text note, joined with " · " when both are given — null when
+ *     // no reason was recorded (a plain NT is still valid on its own).
  *   }
  *
  * Legacy local shapes, migrated ONCE (only if Supabase has zero rows — i.e.
@@ -62,9 +67,9 @@ const Store = (() => {
 
   function emptyTimeFields() {
     return {
-      r1: null, r1NoTime: false,
-      r2: null, r2NoTime: false,
-      shortGo: null, shortGoNoTime: false
+      r1: null, r1NoTime: false, r1NoTimeReason: null,
+      r2: null, r2NoTime: false, r2NoTimeReason: null,
+      shortGo: null, shortGoNoTime: false, shortGoNoTimeReason: null
     };
   }
 
@@ -159,6 +164,7 @@ const Store = (() => {
           for (const key of ['r1', 'r2', 'shortGo']) {
             if (t[key] === undefined) t[key] = null;
             if (t[key + 'NoTime'] === undefined) t[key + 'NoTime'] = false;
+            if (t[key + 'NoTimeReason'] === undefined) t[key + 'NoTimeReason'] = null;
           }
         }
       }
@@ -440,7 +446,7 @@ const Store = (() => {
   //     setter works for both — the entry id is a UUID, effectively unique
   //     across the two lists) ────────────────────────────────────────────
 
-  function setEntryTime(rodeoId, classId, entryId, round, { seconds, noTime }) {
+  function setEntryTime(rodeoId, classId, entryId, round, { seconds, noTime, reason }) {
     const cls = getClass(rodeoId, classId);
     if (!cls) return;
     const entry = (cls.teams || []).find(e => e.id === entryId) ||
@@ -448,9 +454,11 @@ const Store = (() => {
     if (!entry) return;
     const timeKey = round; // 'r1' | 'r2' | 'shortGo'
     const noTimeKey = round + 'NoTime';
+    const reasonKey = round + 'NoTimeReason';
     if (!(timeKey in entry) || !(noTimeKey in entry)) return;
     entry[noTimeKey] = !!noTime;
     entry[timeKey] = noTime ? null : (seconds != null && seconds > 0 ? seconds : null);
+    entry[reasonKey] = noTime ? (reason || null) : null;
     touch(rodeoId);
   }
 
