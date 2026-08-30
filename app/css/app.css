@@ -994,7 +994,10 @@ select.input { cursor: pointer; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  /* Above .toast-root (z-index: 200) — a modal is a deliberate in-progress
+     task and should never have a leftover toast from a prior action
+     visually collide with (or intercept clicks on) its footer buttons. */
+  z-index: 300;
   padding: 20px;
   animation: overlay-in 0.16s ease-out;
 }
@@ -1160,3 +1163,15 @@ select.input { cursor: pointer; }
 .help-body ul { margin: 0 0 10px 20px; }
 .help-body li { margin-bottom: 6px; }
 .help-body strong { color: var(--text); }
+
+.help-feedback {
+  text-align: center;
+  padding: 20px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.help-feedback p { color: var(--text-2); font-size: 0.92rem; }

@@ -332,6 +332,8 @@ const Store = (() => {
       id: uuid(),
       name: cls.name,
       discipline: cls.discipline,
+      format: cls.format || 'two_round',
+      shortGoSize: cls.shortGoSize ?? null,
       riders: (cls.riders || []).map(r => ({ ...r, id: uuid() })),
       teams: [],
       contestants: (cls.contestants || []).map(c => ({ ...c, id: uuid(), ...emptyTimeFields() }))

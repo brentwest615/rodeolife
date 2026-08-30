@@ -512,10 +512,24 @@ function view_help() {
       <p><strong>Export CSV</strong> on a class screen downloads the results as a spreadsheet
       file, matching what's on screen. Team roping classes also get
       <strong>Export by rider</strong> for the round-robin aggregate.</p>
-    `)
+    `),
+    el('div', { class: 'help-feedback' }, [
+      el('p', {}, 'Hit something confusing, or think you found a bug?'),
+      el('a', { class: 'btn btn-primary', href: feedbackMailto() }, [icon('help'), 'Send feedback'])
+    ])
   ]);
 
   return el('div', { class: 'shell' }, [header, el('main', {}, [main])]);
+}
+
+// A plain mailto: is the cheapest possible feedback channel — no backend,
+// no form to build, and it puts a tester's message straight in an inbox
+// that's actually checked. Pre-fills the subject/body so reporting
+// something takes one tap instead of composing an email from scratch.
+function feedbackMailto() {
+  const subject = encodeURIComponent('RodeoLife feedback');
+  const body = encodeURIComponent(`What happened:\n\n\nWhere (screen/rodeo/class):\n\n\n— sent from ${location.href}`);
+  return `mailto:brentwest615@gmail.com?subject=${subject}&body=${body}`;
 }
 
 // ─── Read-only standings (parent-facing, shareable links) ──────────────────
@@ -654,7 +668,7 @@ function standingsRowReadOnly(row, team, decimals, rounds) {
     el('div', { class: 'times-total' + (isNoTimeBadge ? ' has-no-time' : '') }, [
       el('span', { class: 'times-total-label' }, 'Total'),
       el('span', { class: 'times-total-value' },
-        total != null ? total.toFixed(decimals) : (badge || '—'))
+        total != null ? total.toFixed(decimals) : (isNoTimeBadge ? '999.99' : '—'))
     ])
   ]);
 }
